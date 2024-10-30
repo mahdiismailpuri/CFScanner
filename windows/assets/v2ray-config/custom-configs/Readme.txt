@@ -11,7 +11,7 @@ and IP.IP.IP.IP in outbound section like this:
   
    "outbounds": [
     {
-    "protocol": "vmess",
+    "protocol": "vless",
     "settings": {
       "vnext": [{
         "address": "IP.IP.IP.IP", 
