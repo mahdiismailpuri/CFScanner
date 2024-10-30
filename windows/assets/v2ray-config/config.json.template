@@ -1,6 +1,7 @@
 {
-  "inbounds": [{
-    "port": PORTPORT,
+  "inbounds": [
+{
+    "port": "PORTPORT", 
     "listen": "127.0.0.1",
     "tag": "socks-inbound",
     "protocol": "socks",
@@ -13,35 +14,39 @@
       "enabled": true,
       "destOverride": ["http", "tls"]
     }
-  }],
+  }
+  ],
   "outbounds": [
     {
-		"protocol": "vmess",
-    "settings": {
-      "vnext": [{
-        "address": "IP.IP.IP.IP", 
-        "port": CFPORTCFPORT,
-        "users": [{"id": "IDID" }]
-      }]
-    },
-		"streamSettings": {
-        "network": "ws",
+      "tag": "proxy",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [{"address": "IP.IP.IP.IP",
+            "port": CFPORTCFPORT,
+            "users": [{"id": "IDID",
+            "encryption": "none"}]}]
+      },
+      "streamSettings": {
+        "network": "httpupgrade",
         "security": "tls",
-        "wsSettings": {
-            "headers": {
-                "Host": "HOSTHOST"
-            },
-            "path": "ENDPOINTENDPOINT"
-        },
         "tlsSettings": {
-            "serverName": "RANDOMHOST",
-            "allowInsecure": false,
-			"fingerprint": "chrome",
-			"alpn": [
-			"http/1.1"
-			]
+          "serverName": "RANDOMHOST",
+          "allowInsecure": true,
+          "fingerprint": "chrome",
+          "alpn": [
+            "http/1.1"
+          ]
+        },
+        "httpupgradeSettings": {
+          "headers": {
+            "Pragma": "no-cache",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:125.0) Gecko/20100101 Firefox/125.0"
+          },
+          "path": "ENDPOINTENDPOINT",
+          "host": "HOSTHOST"
         }
+      }
     }
-	}],
-  "other": {}
+  ],
+"other": {}
 }
