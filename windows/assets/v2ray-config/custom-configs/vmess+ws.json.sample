@@ -1,5 +1,6 @@
 {
-  "inbounds": [{
+  "inbounds": [
+{
     "port": "PORTPORT", 
     "listen": "127.0.0.1",
     "tag": "socks-inbound",
@@ -13,35 +14,39 @@
       "enabled": true,
       "destOverride": ["http", "tls"]
     }
-  }],
+  }
+  ],
   "outbounds": [
     {
-    "protocol": "vmess",
-    "settings": {
-      "vnext": [{
-        "address": "IP.IP.IP.IP", 
-        "port": 443,
-        "users": [{"id": "248ecb72-89cf-5be7-923f-b790fca681c5" }]
-      }]
-    },
-		"streamSettings": {
-        "network": "ws",
+      "tag": "proxy",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [{"address": "IP.IP.IP.IP",
+            "port": 443,
+            "users": [{"id": "968749b7-4ea1-4aad-af3b-44165298cade",
+            "encryption": "none"}]}]
+      },
+      "streamSettings": {
+        "network": "httpupgrade",
         "security": "tls",
-        "wsSettings": {
-            "headers": {
-                "Host": "scherehtzhel01.sudoer.net"
-            },
-            "path": "api01"
-        },
         "tlsSettings": {
-            "serverName": "248ecb72-89cf-5be7-923f-b790fca681c5.sudoer.net",
-            "allowInsecure": false,
-			"fingerprint": "chrome",
-			"alpn": [
-			"http/1.1"
-			]
+          "serverName": "onvip9.ir",
+          "allowInsecure": true,
+          "fingerprint": "chrome",
+          "alpn": [
+            "http/1.1"
+          ]
+        },
+        "httpupgradeSettings": {
+          "headers": {
+            "Pragma": "no-cache",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:125.0) Gecko/20100101 Firefox/125.0"
+          },
+          "path": "/https/stretchingp/rofoundkn/ighthoodarrivalgallopinductionfeatherweightcapabilitynotchadjustmentovalshakingdeliberateventilationtorchbearerfl/ockuprightdrizzlecowardlymarblespectrumupwardstardominancepulselightningtransfusionmegaph/onenavigateextractioncottonmouthinclinehoistfragranc/evaliantattachmentliftoffdrainspiderfangramblemotio/nblis/sfulladderdizzinessundercoverforgottenboomerangcarouselshadowcastrosybreezemeteorflintstonepuzzledeep/seathunderstormbandagedwavelifeline/jackpotmetallicinterceptsupernovabuttercupchamberdialectcornerstonejum/blefrozenwindstormgritdeterminat/ioncrescendooutreachpumpkinmindsetrecoverycliffhangerthistletwilightmonar/chbree/zebatteryra/indropsummitblossomstam/pedeventuravanguardslingshotundertowcrimsonspindleclockworkflashfros/tsoundwavepersis/tenceburnoutfrictiongalv/anizeascendantp/lanktonfarsightsilverspeedthrillstonewallcodexcharcoal/riverbendnebulafortitudevortexmarathontriumphgliderparallaxjunctionarchetypecatalystsilhouettearrowscopeflashb/ackpayl/oadstarlightboul/deruprootzeppeli/nrootlessnorthe/rnflutterflywheel?ed=2560",
+          "host": "onvip9.ir"
         }
+      }
     }
-	}],
-  "other": {}
+  ],
+"other": {}
 }
