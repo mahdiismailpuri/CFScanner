@@ -136,35 +136,45 @@ fncSubnetToIP() {
 # End of Function fncSubnetToIP
 
 # Function fncShowProgress
-# Progress bar maker function (based on https://www.baeldung.com/linux/command-line-progress-bar)
+# Progress bar maker function with estimated time display
 function fncShowProgress {
 	barCharDone="="
 	barCharTodo=" "
 	barSplitter='>'
 	barPercentageScale=2
-  current="$1"
-  total="$2"
+	current="$1"
+	total="$2"
+	startTime="$3"  # اضافه شده: زمان شروع
 
-  barSize="$(($(tput cols)-70))" # 70 cols for description characters
+	barSize="$(($(tput cols)-70))" # 70 cols for description characters
 
-  # calculate the progress in percentage 
-  percent=$(bc <<< "scale=$barPercentageScale; 100 * $current / $total" )
-  # The number of done and todo characters
-  done=$(bc <<< "scale=0; $barSize * $percent / 100" )
-  todo=$(bc <<< "scale=0; $barSize - $done")
-  # build the done and todo sub-bars
-  doneSubBar=$(printf "%${done}s" | tr " " "${barCharDone}")
-  todoSubBar=$(printf "%${todo}s" | tr " " "${barCharTodo} - 1") # 1 for barSplitter
-  spacesSubBar=$(printf "%${todo}s" | tr " " " ")
+	# calculate the progress in percentage 
+	percent=$(bc <<< "scale=$barPercentageScale; 100 * $current / $total")
+	done=$(bc <<< "scale=0; $barSize * $percent / 100")
+	todo=$(bc <<< "scale=0; $barSize - $done")
+	doneSubBar=$(printf "%${done}s" | tr " " "${barCharDone}")
+	todoSubBar=$(printf "%${todo}s" | tr " " "${barCharTodo}")
+	spacesSubBar=$(printf "%${todo}s" | tr " " " ")
 
-  # output the bar
-  progressBar="| Progress bar of main IPs: [${doneSubBar}${barSplitter}${todoSubBar}] ${percent}%${spacesSubBar}" # Some end space for pretty formatting
+	# Calculate estimated remaining time
+	elapsedTime=$(( $(date +%s) - startTime ))
+	estimatedTotalTime=$(( elapsedTime * total / (current + 1) ))
+	remainingTime=$(( estimatedTotalTime - elapsedTime ))
+
+	# Convert remaining time to hours:minutes:seconds format
+	printf -v remainingTimeFormatted "%02d:%02d:%02d" \
+		$((remainingTime/3600)) $(( (remainingTime%3600)/60 )) $((remainingTime%60))
+
+	# output the bar
+	progressBar="| Progress bar: [${doneSubBar}${barSplitter}${todoSubBar}] ${percent}% | Estimated Time Remaining: ${remainingTimeFormatted}"
+	echo -ne "$progressBar\r"
 }
 # End of Function showProgress
 
 # Function fncCheckIPList
 # Check Subnet
 function fncCheckIPList {
+    startTime="$2"
 	local ipList scriptDir resultFile timeoutCommand domainFronting downOK upOK
 	ipList="${1}"
 	resultFile="${3}"
@@ -627,7 +637,7 @@ function fncMainCFFindSubnet {
 		breakedSubnets=$(echo "${breakedSubnets}"|tr ' ' '\n')
 		for breakedSubnet in ${breakedSubnets}
 		do
-			fncShowProgress "$passedIpsCount" "$ipListLength"
+			fncShowProgress "$passedIpsCount" "$ipListLength" "$startTime"
 			killall v2ray > /dev/null 2>&1
 			ipList=$(fncSubnetToIP "$breakedSubnet")
 	  	tput cuu1; tput ed # rewrites Parallel's bar
@@ -908,10 +918,11 @@ fncValidateConfig "$config"
 
 if [[ "$subnetOrIP" == "SUBNET" ]]
 then
-	fncMainCFFindSubnet	"$threads" "$progressBar" "$resultFile" "$scriptDir" "$configId" "$configHost" "$configPort" "$configPath" "$fileSize" "$osVersion" "$subnetIPFile" "$tryCount" "$downThreshold" "$upThreshold" "$downloadOrUpload" "$vpnOrNot" "$quickOrNot"
+startTime=$(date +%s)
+	fncMainCFFindSubnet	"$threads" "$progressBar" "$resultFile" "$scriptDir" "$configId" "$configHost" "$configPort" "$configPath" "$fileSize" "$osVersion" "$subnetIPFile" "$tryCount" "$downThreshold" "$upThreshold" "$downloadOrUpload" "$vpnOrNot" "$quickOrNot" "$startTime"
 elif [[ "$subnetOrIP" == "IP" ]]
 then
-	fncMainCFFindIP	"$threads" "$progressBar" "$resultFile" "$scriptDir" "$configId" "$configHost" "$configPort" "$configPath" "$fileSize" "$osVersion" "$subnetIPFile" "$tryCount" "$downThreshold" "$upThreshold" "$downloadOrUpload" "$vpnOrNot" "$quickOrNot"
+	fncMainCFFindIP	"$threads" "$progressBar" "$resultFile" "$scriptDir" "$configId" "$configHost" "$configPort" "$configPath" "$fileSize" "$osVersion" "$subnetIPFile" "$tryCount" "$downThreshold" "$upThreshold" "$downloadOrUpload" "$vpnOrNot" "$quickOrNot" 
 else
 	echo "$subnetOrIP is not correct choose one SUBNET or IP"
 	exit 1
