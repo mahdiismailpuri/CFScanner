@@ -5,7 +5,7 @@
 #===============================================================================
 
 # --- Script Version ---
-SCRIPT_VERSION="1.1.2" # Incremented version
+SCRIPT_VERSION="1.1.3" # Incremented version
 
 # --- Clear Screen ---
 clear
@@ -113,14 +113,15 @@ function fncShowProgress {
   todoSubBar=$(printf "%${todo}s" | tr " " "${barCharTodo} - 1") 
   spacesSubBar=$(printf "%${todo}s" | tr " " " ")
 
-  # This global variable will be passed to parallel
-  progressBar="| Progress bar of main IPs: [${doneSubBar}${barSplitter}${todoSubBar}] ${percent}%${spacesSubBar}" 
+  # This global variable will be used to build the display string for parallel
+  progressBar="Progress bar of main IPs: [${doneSubBar}${barSplitter}${todoSubBar}] ${percent}%${spacesSubBar}" 
 }
 # End of Function showProgress
 
 # Function fncCheckIPList
 function fncCheckIPList {
-    local ipList # received_progressBar_string (arg2) is not used for logic here
+    local ipList # received_progressBar_string (arg2) is not used for logic here by this function
+                 # it's for display by parallel --bar
     ipList="${1}"
     # Arguments previously passed directly are now read from environment variables
     local resultFile="$CF_RESULT_FILE_ARG"
@@ -130,8 +131,6 @@ function fncCheckIPList {
     local configPort="$CF_CONFIGPORT_ARG"
     local configPath_esc="$CF_CONFIGPATH_ESC_ARG" # Using escaped version
     local fileSize="$CF_FILESIZE_ARG"
-    # local osVersion="$CF_OS_VERSION_ARG" # "Linux", not directly used by name in this function
-    # local v2rayCommand="$CF_V2RAY_COMMAND_ARG" # "v2ray", not directly used by name
     local tryCount="$CF_TRYCOUNT_ARG"
     local downThreshold="$CF_DOWNTHRESHOLD_ARG"
     local upThreshold="$CF_UPTHRESHOLD_ARG"
@@ -142,7 +141,7 @@ function fncCheckIPList {
     local timeoutCommand domainFronting downOK upOK
     local binDir="$scriptDir/../bin"
     local tempConfigDir="$scriptDir/tempConfig"
-    local uploadFile="$tempConfigDir/upload_file" # Uses scriptDir from env
+    local uploadFile="$tempConfigDir/upload_file"
     
     timeoutCommand="timeout"
 
@@ -177,7 +176,7 @@ function fncCheckIPList {
                         sed -i "s/IDID/$configId/g" "$ipConfigFile"
                         sed -i "s/HOSTHOST/$configHost/g" "$ipConfigFile"
                         sed -i "s/CFPORTCFPORT/$configPort/g" "$ipConfigFile"
-                        sed -i "s/ENDPOINTENDPOINT/$configPath_esc/g" "$ipConfigFile" # Use escaped
+                        sed -i "s/ENDPOINTENDPOINT/$configPath_esc/g" "$ipConfigFile" 
                         sed -i "s/RANDOMHOST/$configServerName/g" "$ipConfigFile"
                         
                         pid=$(ps aux | grep "config.json.$ip" | grep -v grep | awk '{ print $2 }')
@@ -361,7 +360,6 @@ function fncMainCFFindSubnet {
     
     local ipListLength="0"
     local subNet_loop breakedSubnets_loop network_loop netmask_loop i_loop breakedSubnet_item_loop
-    # Define maxSubnet here, changed from 24 to 22
     local maxSubnet_loop=22 
 
     for subNet_loop in ${cfSubnetList}
@@ -369,27 +367,6 @@ function fncMainCFFindSubnet {
         breakedSubnets_loop= 
         network_loop=${subNet_loop%/*}
         netmask_loop=${subNet_loop#*/}
-        if [[ ${netmask_loop} -ge ${maxSubnet_loop} ]]; then # Compare with the new maxSubnet_loop
-          breakedSubnets_loop="${breakedSubnets_loop} ${network_loop}/${netmask_loop}"
-        else
-          for i_loop in $(seq 0 $(( $(( 2 ** (maxSubnet_loop - netmask_loop) )) - 1 )) ); do # Use new maxSubnet_loop
-            breakedSubnets_loop="${breakedSubnets_loop} $( fncLongIntToStr $(( $( fncIpToLongInt "${network_loop}" ) + $(( 2 ** ( 32 - maxSubnet_loop ) * i_loop )) )) )/${maxSubnet_loop}" # Use new maxSubnet_loop
-          done
-        fi
-        breakedSubnets_loop=$(echo "${breakedSubnets_loop}"|tr ' ' '\n')
-        for breakedSubnet_item_loop in ${breakedSubnets_loop} ; do
-            ipListLength=$(( ipListLength+1 ))
-        done
-    done
-
-    local passedIpsCount=0
-    local ipList_loop 
-    for subNet_loop in ${cfSubnetList}
-    do
-        breakedSubnets_loop=
-        network_loop=${subNet_loop%/*}
-        netmask_loop=${subNet_loop#*/}
-        # Ensure maxSubnet_loop is used consistently here as well
         if [[ ${netmask_loop} -ge ${maxSubnet_loop} ]]; then 
           breakedSubnets_loop="${breakedSubnets_loop} ${network_loop}/${netmask_loop}"
         else
@@ -398,21 +375,58 @@ function fncMainCFFindSubnet {
           done
         fi
         breakedSubnets_loop=$(echo "${breakedSubnets_loop}"|tr ' ' '\n')
-        for breakedSubnet_item_loop in ${breakedSubnets_loop} ; do
-            fncShowProgress "$passedIpsCount" "$ipListLength" 
-            
-            ipList_loop=$(fncSubnetToIP "$breakedSubnet_item_loop")
+        # Ensure breakedSubnets_loop is not empty before iterating
+        if [[ -n "$breakedSubnets_loop" ]]; then
+            for breakedSubnet_item_loop in ${breakedSubnets_loop} ; do
+                # Ensure breakedSubnet_item_loop is not empty if breakedSubnets_loop might contain empty lines after tr
+                if [[ -n "$breakedSubnet_item_loop" ]]; then
+                    ipListLength=$(( ipListLength+1 ))
+                fi
+            done
+        fi
+    done
 
-            tput cuu1; tput ed 
+    local passedIpsCount=0
+    local ipList_loop 
+    # progressBar is a global variable set by fncShowProgress
+    for subNet_loop in ${cfSubnetList}
+    do
+        breakedSubnets_loop=
+        network_loop=${subNet_loop%/*}
+        netmask_loop=${subNet_loop#*/}
+        if [[ ${netmask_loop} -ge ${maxSubnet_loop} ]]; then 
+          breakedSubnets_loop="${breakedSubnets_loop} ${network_loop}/${netmask_loop}"
+        else
+          for i_loop in $(seq 0 $(( $(( 2 ** (maxSubnet_loop - netmask_loop) )) - 1 )) ); do 
+            breakedSubnets_loop="${breakedSubnets_loop} $( fncLongIntToStr $(( $( fncIpToLongInt "${network_loop}" ) + $(( 2 ** ( 32 - maxSubnet_loop ) * i_loop )) )) )/${maxSubnet_loop}" 
+          done
+        fi
+        breakedSubnets_loop=$(echo "${breakedSubnets_loop}"|tr ' ' '\n')
+        if [[ -n "$breakedSubnets_loop" ]]; then
+            for breakedSubnet_item_loop in ${breakedSubnets_loop} ; do
+                if [[ -n "$breakedSubnet_item_loop" ]]; then
+                    fncShowProgress "$passedIpsCount" "$ipListLength" # Sets global progressBar
+                    
+                    ipList_loop=$(fncSubnetToIP "$breakedSubnet_item_loop")
 
-            if [[ $parallelVersion -gt 20220515 ]]; then
-              parallel --ll --bar -j "$threads_main" fncCheckIPList ::: "$ipList_loop" ::: "$progressBar"
-            else
-              echo -e "${RED}$progressBar${NC}" 
-              parallel -j "$threads_main" fncCheckIPList ::: "$ipList_loop" ::: "$progressBar"
-            fi
-            passedIpsCount=$(( passedIpsCount+1 ))
-        done
+                    tput cuu1; tput ed 
+
+                    local current_subnet_display_index=$((passedIpsCount + 1))
+                    # Construct the new display string for parallel's second argument
+                    local display_string_for_parallel="| ($current_subnet_display_index:$ipListLength) | $progressBar"
+
+
+                    if [[ $parallelVersion -gt 20220515 ]]; then
+                      parallel --ll --bar -j "$threads_main" fncCheckIPList ::: "$ipList_loop" ::: "$display_string_for_parallel"
+                    else
+                      # Also update the echo for the non --bar case for consistency
+                      echo -e "${RED}$display_string_for_parallel${NC}" 
+                      parallel -j "$threads_main" fncCheckIPList ::: "$ipList_loop" ::: "$display_string_for_parallel"
+                    fi
+                    passedIpsCount=$(( passedIpsCount+1 ))
+                fi
+            done
+        fi
     done
     echo "" 
     sort -n -k1 -t, "$resultFile_main" -o "$resultFile_main"
