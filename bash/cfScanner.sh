@@ -1,11 +1,11 @@
-#!/bin/bash -
+#!/binbash -
 #===============================================================================
 # REQUIREMENTS: getopt, jq, git, tput, bc, curl, parallel (version > 20220515), shuf
 # ORGANIZATION: Linux
 #===============================================================================
 
 # --- Script Version ---
-SCRIPT_VERSION="1.1.0"
+SCRIPT_VERSION="1.1.1" # Incremented version
 
 # --- Clear Screen ---
 clear
@@ -79,8 +79,6 @@ fncSubnetToIP() {
   [[ ${maskarr[2]} == 255 ]] && maskarr[1]=255
   [[ ${maskarr[1]} == 255 ]] && maskarr[0]=255
 
-    # generate list of ip addresses
-    # Randomness part is removed as per user request
     local bytes=(0 0 0 0)
     for i in $(seq 0 $((255-maskarr[0]))); do
       bytes[0]="$(( i+(iparr[0] & maskarr[0]) ))"
@@ -88,7 +86,7 @@ fncSubnetToIP() {
         bytes[1]="$(( j+(iparr[1] & maskarr[1]) ))"
         for k in $(seq 0 $((255-maskarr[2]))); do
           bytes[2]="$(( k+(iparr[2] & maskarr[2]) ))"
-          for l in $(seq 1 $((255-maskarr[3]))); do # Start l from 1 to avoid .0 addresses if not needed (can be adjusted)
+          for l in $(seq 1 $((255-maskarr[3]))); do 
             bytes[3]="$(( l+(iparr[3] & maskarr[3]) ))"
             printf "%d.%d.%d.%d\n" "${bytes[@]}"
           done
@@ -99,7 +97,6 @@ fncSubnetToIP() {
 # End of Function fncSubnetToIP
 
 # Function fncShowProgress
-# Progress bar maker function (based on https://www.baeldung.com/linux/command-line-progress-bar)
 function fncShowProgress {
     barCharDone="="
     barCharTodo=" "
@@ -107,316 +104,163 @@ function fncShowProgress {
     barPercentageScale=2
   current="$1"
   total="$2"
+  barSize="10" 
 
-  barSize="$(($(tput cols)-70))" # 70 cols for description characters
-
-  # calculate the progress in percentage
   percent=$(bc <<< "scale=$barPercentageScale; 100 * $current / $total" )
-  # The number of done and todo characters
   done=$(bc <<< "scale=0; $barSize * $percent / 100" )
   todo=$(bc <<< "scale=0; $barSize - $done")
-  # build the done and todo sub-bars
   doneSubBar=$(printf "%${done}s" | tr " " "${barCharDone}")
-  todoSubBar=$(printf "%${todo}s" | tr " " "${barCharTodo} - 1") # 1 for barSplitter
+  todoSubBar=$(printf "%${todo}s" | tr " " "${barCharTodo} - 1") 
   spacesSubBar=$(printf "%${todo}s" | tr " " " ")
 
-  # output the bar
-  progressBar="| Progress bar of main IPs: [${doneSubBar}${barSplitter}${todoSubBar}] ${percent}%${spacesSubBar}" # Some end space for pretty formatting
+  # This global variable will be passed to parallel
+  progressBar="| Progress bar of main IPs: [${doneSubBar}${barSplitter}${todoSubBar}] ${percent}%${spacesSubBar}" 
 }
 # End of Function showProgress
 
 # Function fncCheckIPList
-# Check Subnet
 function fncCheckIPList {
-    local ipList scriptDir resultFile timeoutCommand domainFronting downOK upOK
+    local ipList # received_progressBar_string (arg2) is not used for logic here
     ipList="${1}"
-    resultFile="${3}"
-    scriptDir="${4}"
-    configId="${5}"
-    configHost="${6}"
-    configPort="${7}"
-    configPath="${8}"
-    fileSize="${9}"
-    # osVersion is now hardcoded to Linux
-    # v2rayCommand is now hardcoded to v2ray
-    tryCount="${12}"
-    downThreshold="${13}"
-    upThreshold="${14}"
-    downloadOrUpload="${15}"
-    vpnOrNot="${16}"
-    quickOrNot="${17}"
-    binDir="$scriptDir/../bin"
-    tempConfigDir="$scriptDir/tempConfig"
-    uploadFile="$tempConfigDir/upload_file"
-    configPath=$(echo "$configPath" | sed 's/\//\\\//g')
+    # Arguments previously passed directly are now read from environment variables
+    local resultFile="$CF_RESULT_FILE_ARG"
+    local scriptDir="$CF_SCRIPT_DIR_ARG"
+    local configId="$CF_CONFIGID_ARG"
+    local configHost="$CF_CONFIGHOST_ARG"
+    local configPort="$CF_CONFIGPORT_ARG"
+    local configPath_esc="$CF_CONFIGPATH_ESC_ARG" # Using escaped version
+    local fileSize="$CF_FILESIZE_ARG"
+    # local osVersion="$CF_OS_VERSION_ARG" # "Linux", not directly used by name in this function
+    # local v2rayCommand="$CF_V2RAY_COMMAND_ARG" # "v2ray", not directly used by name
+    local tryCount="$CF_TRYCOUNT_ARG"
+    local downThreshold="$CF_DOWNTHRESHOLD_ARG"
+    local upThreshold="$CF_UPTHRESHOLD_ARG"
+    local downloadOrUpload="$CF_DOWNLOADORUPLOAD_ARG"
+    local vpnOrNot="$CF_VPNORNOT_ARG"
+    local quickOrNot="$CF_QUICKORNOT_ARG"
+
+    local timeoutCommand domainFronting downOK upOK
+    local binDir="$scriptDir/../bin"
+    local tempConfigDir="$scriptDir/tempConfig"
+    local uploadFile="$tempConfigDir/upload_file" # Uses scriptDir from env
     
-    timeoutCommand="timeout" # Hardcoded for Linux
+    timeoutCommand="timeout"
 
     if [[ "$vpnOrNot" == "YES" ]]
     then
         for ip in ${ipList}
             do
-                if [[  "$downloadOrUpload" == "BOTH" ]]
-                then
-                    downOK="NO"
-                    upOK="NO"
-                elif [[ "$downloadOrUpload" == "UP" ]]
-                then
-                    downOK="YES"
-                    upOK="NO"
-                elif [[ "$downloadOrUpload" == "DOWN" ]]
-                then
-                    downOK="NO"
-                    upOK="YES"
-                fi
+                if [[  "$downloadOrUpload" == "BOTH" ]]; then downOK="NO"; upOK="NO";
+                elif [[ "$downloadOrUpload" == "UP" ]]; then downOK="YES"; upOK="NO";
+                elif [[ "$downloadOrUpload" == "DOWN" ]]; then downOK="NO"; upOK="YES"; fi
+
                 if $timeoutCommand 1 bash -c "</dev/tcp/$ip/443" > /dev/null 2>&1;
                 then
-                    if [[ "$quickOrNot" == "NO" ]]
-                    then
+                    if [[ "$quickOrNot" == "NO" ]]; then
                         domainFronting=$($timeoutCommand 1 curl -k -s --tlsv1.2 -H "Host: speed.cloudflare.com" --resolve "speed.cloudflare.com:443:$ip" "https://speed.cloudflare.com/__down?bytes=10")
-                    elif [[ "$quickOrNot" == "YES" ]]
-                    then
+                    else
                         domainFronting="0000000000"
                     fi
-                    if [[ "$domainFronting" == "0000000000" ]]
-                    then
+
+                    if [[ "$domainFronting" == "0000000000" ]]; then
+                        local mainDomain randomUUID configServerName ipConfigFile ipO1 ipO2 ipO3 ipO4 port pid
                         mainDomain=$(echo "$configHost" | awk -F '.' '{ print $2"."$3}')
-                        # UUID generation for Linux
                         randomUUID=$(cat /proc/sys/kernel/random/uuid)
                         configServerName="$randomUUID.$mainDomain"
                         ipConfigFile="$tempConfigDir/config.json.$ip"
                         cp "$scriptDir"/config.json.temp "$ipConfigFile"
-                        ipO1=$(echo "$ip" | awk -F '.' '{print $1}')
-                        ipO2=$(echo "$ip" | awk -F '.' '{print $2}')
-                        ipO3=$(echo "$ip" | awk -F '.' '{print $3}')
-                        ipO4=$(echo "$ip" | awk -F '.' '{print $4}')
+                        ipO1=$(echo "$ip" | awk -F '.' '{print $1}'); ipO2=$(echo "$ip" | awk -F '.' '{print $2}'); ipO3=$(echo "$ip" | awk -F '.' '{print $3}'); ipO4=$(echo "$ip" | awk -F '.' '{print $4}')
                         port=$((ipO1 + ipO2 + ipO3 + ipO4))
-                        # Sed command for Linux
+                        
                         sed -i "s/IP.IP.IP.IP/$ip/g" "$ipConfigFile"
                         sed -i "s/PORTPORT/3$port/g" "$ipConfigFile"
                         sed -i "s/IDID/$configId/g" "$ipConfigFile"
                         sed -i "s/HOSTHOST/$configHost/g" "$ipConfigFile"
                         sed -i "s/CFPORTCFPORT/$configPort/g" "$ipConfigFile"
-                        sed -i "s/ENDPOINTENDPOINT/$configPath/g" "$ipConfigFile"
+                        sed -i "s/ENDPOINTENDPOINT/$configPath_esc/g" "$ipConfigFile" # Use escaped
                         sed -i "s/RANDOMHOST/$configServerName/g" "$ipConfigFile"
-                        # shellcheck disable=SC2009
-                        pid=$(ps aux | grep config.json."$ip" | grep -v grep | awk '{ print $2 }')
-                        if [[ "$pid" ]]
-                        then
-                            kill -9 "$pid" > /dev/null 2>&1
-                        fi
-                        downTotalTime=0
-                        upTotalTime=0
-                        downAvgStr=""
-                        upAvgStr=""
-                        downIndividualTimes=""
-                        upIndividualTimes=""
-                        downSuccessedCount=0
-                        upSuccessedCount=0
-                        nohup "$binDir"/"v2ray" -c "$ipConfigFile" > /dev/null & # Hardcoded v2ray command
+                        
+                        pid=$(ps aux | grep "config.json.$ip" | grep -v grep | awk '{ print $2 }')
+                        if [[ "$pid" ]]; then kill -9 "$pid" > /dev/null 2>&1; fi
+                        
+                        local downTotalTime=0 upTotalTime=0 downIndividualTimes="" upIndividualTimes="" downSuccessedCount=0 upSuccessedCount=0 downTimeMil upTimeMil result i
+                        nohup "$binDir"/"v2ray" -c "$ipConfigFile" > /dev/null & 
                         sleep 2
-                        for i in $(seq 1 "$tryCount");
-                        do
-                            downTimeMil=0
-                            upTimeMil=0
-                            if [[ "$downloadOrUpload" == "DOWN" ]] || [[  "$downloadOrUpload" == "BOTH" ]]
-                            then
+                        for i in $(seq 1 "$tryCount"); do
+                            downTimeMil=0; upTimeMil=0
+                            if [[ "$downloadOrUpload" == "DOWN" ]] || [[ "$downloadOrUpload" == "BOTH" ]]; then
                                 downTimeMil=$($timeoutCommand 2 curl -x "socks5://127.0.0.1:3$port" -s -w "TIME: %{time_total}\n" --resolve "speed.cloudflare.com:443:$ip" "https://speed.cloudflare.com/__down?bytes=$fileSize" --output /dev/null | grep "TIME" | tail -n 1 | awk '{print $2}' | xargs -I {} echo "{} * 1000 /1" | bc )
-                                if [[ $downTimeMil -gt 100 ]]
-                                then
-                                    downSuccessedCount=$(( downSuccessedCount+1 ))
-                                    downIndividualTimes+="$downTimeMil, "
-                                else
-                                    downTimeMil=0
-                                    downIndividualTimes+="0, "
-                                fi
+                                if [[ $downTimeMil -gt 100 ]]; then downSuccessedCount=$((downSuccessedCount+1)); downIndividualTimes+="$downTimeMil, "; else downTimeMil=0; downIndividualTimes+="0, "; fi
                             fi
-                            if [[ "$downloadOrUpload" == "UP" ]] || [[  "$downloadOrUpload" == "BOTH" ]]
-                            then
+                            if [[ "$downloadOrUpload" == "UP" ]] || [[ "$downloadOrUpload" == "BOTH" ]]; then
                                 result=$($timeoutCommand 2 curl -x "socks5://127.0.0.1:3$port" -s -w "\nTIME: %{time_total}\n" --resolve "speed.cloudflare.com:443:$ip" --data "@$uploadFile" https://speed.cloudflare.com/__up | grep "TIME" | tail -n 1 | awk '{print $2}' | xargs -I {} echo "{} * 1000 /1" | bc)
-                                if [[ "$result" ]]
-                                then
-                                    upTimeMil="$result"
-                                    if [[ $upTimeMil -gt 100 ]]
-                                    then
-                                        upSuccessedCount=$(( upSuccessedCount+1 ))
-                                        upIndividualTimes+="$upTimeMil, "
-                                    else
-                                        upTimeMil=0
-                                        upIndividualTimes+="0, "
-                                    fi
-                                else
-                                    upIndividualTimes+="0, " # Add 0 if curl fails
-                                fi
+                                if [[ "$result" ]]; then upTimeMil="$result"; if [[ $upTimeMil -gt 100 ]]; then upSuccessedCount=$((upSuccessedCount+1)); upIndividualTimes+="$upTimeMil, "; else upTimeMil=0; upIndividualTimes+="0, "; fi
+                                else upIndividualTimes+="0, "; fi
                             fi
-                            downTotalTime=$(( downTotalTime+downTimeMil ))
-                            upTotalTime=$(( upTotalTime+upTimeMil ))
-                            # downAvgStr and upAvgStr are not needed anymore with the new format
+                            downTotalTime=$((downTotalTime+downTimeMil)); upTotalTime=$((upTotalTime+upTimeMil))
                         done
-                        # Remove trailing comma and space
-                        downIndividualTimes=${downIndividualTimes%, }
-                        upIndividualTimes=${upIndividualTimes%, }
+                        downIndividualTimes=${downIndividualTimes%, }; upIndividualTimes=${upIndividualTimes%, }
+                        local downRealTime=0 upRealTime=0
+                        if [[ $downSuccessedCount -ge $downThreshold ]] && [[ "$downloadOrUpload" != "UP" ]]; then downOK="YES"; if [[ $downSuccessedCount -gt 0 ]]; then downRealTime=$((downTotalTime/downSuccessedCount)); fi; fi
+                        if [[ $upSuccessedCount -ge $upThreshold ]] && [[ "$downloadOrUpload" != "DOWN" ]]; then upOK="YES"; if [[ $upSuccessedCount -gt 0 ]]; then upRealTime=$((upTotalTime/upSuccessedCount)); fi; fi
+                        
+                        pid=$(ps aux | grep "config.json.$ip" | grep -v grep | awk '{ print $2 }')
+                        if [[ "$pid" ]]; then kill -9 "$pid" > /dev/null 2>&1; fi
 
-                        if [[ $downSuccessedCount -ge $downThreshold ]] && [[ "$downloadOrUpload" != "UP" ]]
-                        then
-                            downOK="YES"
-                            downRealTime=$(( downTotalTime/downSuccessedCount ))
-                        else
-                            downRealTime=0
-                        fi
-                        if [[ $upSuccessedCount -ge $upThreshold ]] && [[ "$downloadOrUpload" != "DOWN" ]]
-                        then
-                            upOK="YES"
-                            upRealTime=$(( upTotalTime/upSuccessedCount ))
-                        else
-                            upRealTime=0
-                        fi
-                        # shellcheck disable=SC2009
-                        pid=$(ps aux | grep config.json."$ip" | grep -v grep | awk '{ print $2 }')
-                        if [[ "$pid" ]]
-                        then
-                            kill -9 "$pid" > /dev/null 2>&1
-                        fi
-                        if [[ "$downOK" == "YES" ]] && [[ "$upOK" == "YES" ]]
-                        then
-                            if [[ "$downRealTime" && $downRealTime -gt 100 ]] || [[ "$upRealTime" && $upRealTime -gt 100 ]]
-                            then
+                        if [[ "$downOK" == "YES" ]] && [[ "$upOK" == "YES" ]]; then
+                            if [[ "$downRealTime" && $downRealTime -gt 100 ]] || [[ "$upRealTime" && $upRealTime -gt 100 ]]; then
                                 echo -e "${GREEN}OK${NC} $ip ${BLUE}DOWN: Avg $downRealTime [$downIndividualTimes] ${ORANGE}UP: Avg $upRealTime [$upIndividualTimes]${NC}"
-                                if [[ "$downRealTime" && $downRealTime -gt 100 ]]
-                                then
-                                    echo "$downRealTime, [$downIndividualTimes] DOWN FOR IP $ip" >> "$resultFile"
-                                fi
-                                if [[ "$upRealTime" && $upRealTime -gt 100 ]]
-                                then
-                                    echo "$upRealTime, [$upIndividualTimes] UP FOR IP $ip" >> "$resultFile"
-                                fi
-                            else
-                                echo -e "${RED}FAILED${NC} $ip"
-                            fi
-                        else
-                            echo -e "${RED}FAILED${NC} $ip"
-                        fi
-                    else
-                        echo -e "${RED}FAILED${NC} $ip"
-                    fi
-                else
-                    echo -e "${RED}FAILED${NC} $ip"
-                fi
+                                if [[ "$downRealTime" && $downRealTime -gt 100 ]]; then echo "$downRealTime, [$downIndividualTimes] DOWN FOR IP $ip" >> "$resultFile"; fi
+                                if [[ "$upRealTime" && $upRealTime -gt 100 ]]; then echo "$upRealTime, [$upIndividualTimes] UP FOR IP $ip" >> "$resultFile"; fi
+                            else echo -e "${RED}FAILED${NC} $ip"; fi
+                        else echo -e "${RED}FAILED${NC} $ip"; fi
+                    else echo -e "${RED}FAILED${NC} $ip"; fi
+                else echo -e "${RED}FAILED${NC} $ip"; fi
         done
     elif [[ "$vpnOrNot" == "NO" ]]
     then
         for ip in ${ipList}
             do
-                if [[  "$downloadOrUpload" == "BOTH" ]]
-                then
-                    downOK="NO"
-                    upOK="NO"
-                elif [[ "$downloadOrUpload" == "UP" ]]
-                then
-                    downOK="YES"
-                    upOK="NO"
-                elif [[ "$downloadOrUpload" == "DOWN" ]]
-                then
-                    downOK="NO"
-                    upOK="YES"
-                fi
+                if [[  "$downloadOrUpload" == "BOTH" ]]; then downOK="NO"; upOK="NO";
+                elif [[ "$downloadOrUpload" == "UP" ]]; then downOK="YES"; upOK="NO";
+                elif [[ "$downloadOrUpload" == "DOWN" ]]; then downOK="NO"; upOK="YES"; fi
+
                 if $timeoutCommand 1 bash -c "</dev/tcp/$ip/443" > /dev/null 2>&1;
                 then
-                    if [[ "$quickOrNot" == "NO" ]]
-                    then
+                    if [[ "$quickOrNot" == "NO" ]]; then
                         domainFronting=$($timeoutCommand 1 curl -k -s --tlsv1.2 -H "Host: speed.cloudflare.com" --resolve "speed.cloudflare.com:443:$ip" "https://speed.cloudflare.com/__down?bytes=10")
-                    elif [[ "$quickOrNot" == "YES" ]]
-                    then
+                    else
                         domainFronting="0000000000"
                     fi
-                    if [[ "$domainFronting" == "0000000000" ]]
-                    then
-                        downTotalTime=0
-                        upTotalTime=0
-                        downIndividualTimes=""
-                        upIndividualTimes=""
-                        downSuccessedCount=0
-                        upSuccessedCount=0
-                        for i in $(seq 1 "$tryCount");
-                        do
-                            downTimeMil=0
-                            upTimeMil=0
-                            if [[ "$downloadOrUpload" == "DOWN" ]] || [[  "$downloadOrUpload" == "BOTH" ]]
-                            then
+                    if [[ "$domainFronting" == "0000000000" ]]; then
+                        local downTotalTime=0 upTotalTime=0 downIndividualTimes="" upIndividualTimes="" downSuccessedCount=0 upSuccessedCount=0 downTimeMil upTimeMil result i
+                        for i in $(seq 1 "$tryCount"); do
+                            downTimeMil=0; upTimeMil=0
+                            if [[ "$downloadOrUpload" == "DOWN" ]] || [[ "$downloadOrUpload" == "BOTH" ]]; then
                                 downTimeMil=$($timeoutCommand 2 curl -s -w "TIME: %{time_total}\n" -H "Host: speed.cloudflare.com" --resolve "speed.cloudflare.com:443:$ip" "https://speed.cloudflare.com/__down?bytes=$fileSize" --output /dev/null | grep "TIME" | tail -n 1 | awk '{print $2}' | xargs -I {} echo "{} * 1000 /1" | bc )
-                                if [[ $downTimeMil -gt 100 ]]
-                                then
-                                    downSuccessedCount=$(( downSuccessedCount+1 ))
-                                    downIndividualTimes+="$downTimeMil, "
-                                else
-                                    downTimeMil=0
-                                    downIndividualTimes+="0, "
-                                fi
+                                if [[ $downTimeMil -gt 100 ]]; then downSuccessedCount=$((downSuccessedCount+1)); downIndividualTimes+="$downTimeMil, "; else downTimeMil=0; downIndividualTimes+="0, "; fi
                             fi
-                            if [[ "$downloadOrUpload" == "UP" ]] || [[  "$downloadOrUpload" == "BOTH" ]]
-                            then
+                            if [[ "$downloadOrUpload" == "UP" ]] || [[ "$downloadOrUpload" == "BOTH" ]]; then
                                 result=$($timeoutCommand 2 curl -s -w "\nTIME: %{time_total}\n" -H "Host: speed.cloudflare.com" --resolve "speed.cloudflare.com:443:$ip" --data "@$uploadFile" https://speed.cloudflare.com/__up | grep "TIME" | tail -n 1 | awk '{print $2}' | xargs -I {} echo "{} * 1000 /1" | bc)
-                                if [[ "$result" ]]
-                                then
-                                    upTimeMil="$result"
-                                    if [[ $upTimeMil -gt 100 ]]
-                                    then
-                                        upSuccessedCount=$(( upSuccessedCount+1 ))
-                                        upIndividualTimes+="$upTimeMil, "
-                                    else
-                                        upTimeMil=0
-                                        upIndividualTimes+="0, "
-                                    fi
-                                else
-                                    upIndividualTimes+="0, " # Add 0 if curl fails
-                                fi
+                                if [[ "$result" ]]; then upTimeMil="$result"; if [[ $upTimeMil -gt 100 ]]; then upSuccessedCount=$((upSuccessedCount+1)); upIndividualTimes+="$upTimeMil, "; else upTimeMil=0; upIndividualTimes+="0, "; fi
+                                else upIndividualTimes+="0, "; fi
                             fi
-                            downTotalTime=$(( downTotalTime+downTimeMil ))
-                            upTotalTime=$(( upTotalTime+upTimeMil ))
+                            downTotalTime=$((downTotalTime+downTimeMil)); upTotalTime=$((upTotalTime+upTimeMil))
                         done
-                        # Remove trailing comma and space
-                        downIndividualTimes=${downIndividualTimes%, }
-                        upIndividualTimes=${upIndividualTimes%, }
+                        downIndividualTimes=${downIndividualTimes%, }; upIndividualTimes=${upIndividualTimes%, }
+                        local downRealTime=0 upRealTime=0
+                        if [[ $downSuccessedCount -ge $downThreshold ]] && [[ "$downloadOrUpload" != "UP" ]]; then downOK="YES"; if [[ $downSuccessedCount -gt 0 ]]; then downRealTime=$((downTotalTime/downSuccessedCount)); fi; fi
+                        if [[ $upSuccessedCount -ge $upThreshold ]] && [[ "$downloadOrUpload" != "DOWN" ]]; then upOK="YES"; if [[ $upSuccessedCount -gt 0 ]]; then upRealTime=$((upTotalTime/upSuccessedCount)); fi; fi
 
-                        if [[ $downSuccessedCount -ge $downThreshold ]] && [[ "$downloadOrUpload" != "UP" ]]
-                        then
-                            downOK="YES"
-                            downRealTime=$(( downTotalTime/downSuccessedCount ))
-                        else
-                            downRealTime=0
-                        fi
-                        if [[ $upSuccessedCount -ge $upThreshold ]] && [[ "$downloadOrUpload" != "DOWN" ]]
-                        then
-                            upOK="YES"
-                            upRealTime=$(( upTotalTime/upSuccessedCount ))
-                        else
-                            upRealTime=0
-                        fi
-                        if [[ "$downOK" == "YES" ]] && [[ "$upOK" == "YES" ]]
-                        then
-                            if [[ "$downRealTime" && $downRealTime -gt 100 ]] || [[ "$upRealTime" && $upRealTime -gt 100 ]]
-                            then
+                        if [[ "$downOK" == "YES" ]] && [[ "$upOK" == "YES" ]]; then
+                            if [[ "$downRealTime" && $downRealTime -gt 100 ]] || [[ "$upRealTime" && $upRealTime -gt 100 ]]; then
                                 echo -e "${GREEN}OK${NC} $ip ${BLUE}DOWN: Avg $downRealTime [$downIndividualTimes] ${ORANGE}UP: Avg $upRealTime [$upIndividualTimes]${NC}"
-                                if [[ "$downRealTime" && $downRealTime -gt 100 ]]
-                                then
-                                    echo "$downRealTime, [$downIndividualTimes] DOWN FOR IP $ip" >> "$resultFile"
-                                fi
-                                if [[ "$upRealTime" && $upRealTime -gt 100 ]]
-                                then
-                                    echo "$upRealTime, [$upIndividualTimes] UP FOR IP $ip" >> "$resultFile"
-                                fi
-                            else
-                                echo -e "${RED}FAILED${NC} $ip"
-                            fi
-                        else
-                            echo -e "${RED}FAILED${NC} $ip"
-                        fi
-                    else
-                        echo -e "${RED}FAILED${NC} $ip"
-                    fi
-                else
-                    echo -e "${RED}FAILED${NC} $ip"
-                fi
+                                if [[ "$downRealTime" && $downRealTime -gt 100 ]]; then echo "$downRealTime, [$downIndividualTimes] DOWN FOR IP $ip" >> "$resultFile"; fi
+                                if [[ "$upRealTime" && $upRealTime -gt 100 ]]; then echo "$upRealTime, [$upIndividualTimes] UP FOR IP $ip" >> "$resultFile"; fi
+                            else echo -e "${RED}FAILED${NC} $ip"; fi
+                        else echo -e "${RED}FAILED${NC} $ip"; fi
+                    else echo -e "${RED}FAILED${NC} $ip"; fi
+                else echo -e "${RED}FAILED${NC} $ip"; fi
         done
     fi
 }
@@ -424,46 +268,39 @@ function fncCheckIPList {
 export -f fncCheckIPList
 
 # Function fncCheckDpnd
-# Check for dipendencies
 function fncCheckDpnd {
-    # osVersion is now hardcoded to Linux
     command -v jq >/dev/null 2>&1 || { echo >&2 "I require 'jq' but it's not installed. Please install it and try again."; kill -s 1 "$TOP_PID"; }
     command -v parallel >/dev/null 2>&1 || { echo >&2 "I require 'parallel' but it's not installed. Please install it and try again."; kill -s 1 "$TOP_PID"; }
     command -v bc >/dev/null 2>&1 || { echo >&2 "I require 'bc' but it's not installed. Please install it and try again."; kill -s 1 "$TOP_PID"; }
     command -v timeout >/dev/null 2>&1 || { echo >&2 "I require 'timeout' but it's not installed. Please install it and try again."; kill -s 1 "$TOP_PID"; }
-    echo "Linux" # Hardcoded for Linux
+    echo "Linux" 
 }
 # End of Function fncCheckDpnd
 
 # Function fncValidateConfig
-# Install packages on destination host
 function fncValidateConfig {
-    local config
-    config="$1"
-    if [[ -f "$config" ]]
-    then
+    local config_file_path="$1" # Renamed to avoid conflict with global 'config'
+    if [[ -f "$config_file_path" ]]; then
         echo "reading config ..."
-        configId=$(jq --raw-output .id "$config")
-        configHost=$(jq --raw-output .host "$config")
-        configPort=$(jq --raw-output .port "$config")
-        configPath=$(jq --raw-output .path "$config")
-        if ! [[ "$configId" ]] || ! [[ $configHost ]] || ! [[ $configPort ]] || ! [[ $configPath ]]
-        then
+        # These are intended to be global for the script
+        configId=$(jq --raw-output .id "$config_file_path")
+        configHost=$(jq --raw-output .host "$config_file_path")
+        configPort=$(jq --raw-output .port "$config_file_path")
+        configPath=$(jq --raw-output .path "$config_file_path")
+        if ! [[ "$configId" && "$configHost" && "$configPort" && "$configPath" ]]; then
             echo "config is not correct"
             exit 1
         fi
     else
-        echo "config file does not exist $config"
+        echo "config file does not exist $config_file_path"
         exit 1
     fi
 }
 # End of Function fncValidateConfig
 
 # Function fncCreateDir
-# creates needed directory
 function fncCreateDir {
-    local dirPath
-    dirPath="${1}"
+    local dirPath="${1}"
     if [ ! -d "$dirPath" ]; then
         mkdir -p "$dirPath"
     fi
@@ -471,117 +308,132 @@ function fncCreateDir {
 # End of Function fncCreateDir
 
 # Function fncMainCFFindSubnet
-# main Function for Subnet
 function fncMainCFFindSubnet {
-    local threads progressBar resultFile scriptDir configId configHost configPort configPath fileSize osVersion parallelVersion subnetsFile breakedSubnets network netmask downloadOrUpload tryCount downThreshold upThreshold vpnOrNot quickOrNot
-    threads="${1}"
-    progressBar="${2}"
-    resultFile="${3}"
-    scriptDir="${4}"
-    configId="${5}"
-    configHost="${6}"
-    configPort="${7}"
-    configPath="${8}"
-    fileSize="${9}"
-    # osVersion is now hardcoded to Linux
-    subnetsFile="${11}"
-    tryCount="${12}"
-    downThreshold="${13}"
-    upThreshold="${14}"
-    downloadOrUpload="${15}"
-    vpnOrNot="${16}"
-    quickOrNot="${17}"
+    # These are arguments passed to this function
+    local threads_main="${1}"
+    # progressBar_main_arg is arg ${2} - a placeholder now, as global progressBar is used by fncShowProgress
+    local resultFile_main="${3}"
+    local scriptDir_main="${4}"
+    local configId_main="${5}" # This is the global configId set by fncValidateConfig
+    local configHost_main="${6}" # This is the global configHost
+    local configPort_main="${7}" # This is the global configPort
+    local configPath_main="${8}" # This is the global configPath
+    local fileSize_main="${9}"
+    local osVersion_main_arg="${10}" 
+    local subnetsFile_main="${11}"
+    local tryCount_main="${12}"
+    local downThreshold_main="${13}"
+    local upThreshold_main="${14}"
+    local downloadOrUpload_main="${15}"
+    local vpnOrNot_main="${16}"
+    local quickOrNot_main="${17}"
 
-    local v2rayCommand="v2ray" # Hardcoded for Linux
-
+    local v2rayCommand_local="v2ray" 
+    local parallelVersion
     parallelVersion=$(parallel --version | head -n1 | grep -Ewo '[0-9]{8}')
     
-    # Removed internet download for subnetsFile as per user request
-    if [[ ! -f "$subnetsFile" ]] && [[ "$subnetsFile" != "NULL" ]]; then
-        echo "Subnet file $subnetsFile not found. Exiting."
+    # Exporting variables needed by fncCheckIPList
+    export CF_RESULT_FILE_ARG="$resultFile_main"
+    export CF_SCRIPT_DIR_ARG="$scriptDir_main"
+    export CF_CONFIGID_ARG="$configId_main"
+    export CF_CONFIGHOST_ARG="$configHost_main"
+    export CF_CONFIGPORT_ARG="$configPort_main"
+    # configPath_main needs to be escaped for sed in fncCheckIPList
+    # It's better to do escaping once before export or handle it carefully.
+    # For now, assume fncCheckIPList will handle its own copy or receive it escaped.
+    # Let's export the original and an escaped version if needed, or handle in fncCheckIPList.
+    # The original script escaped it inside fncCheckIPList. So we pass the original.
+    # However, for consistency, we'll pass the escaped version via env var.
+    local configPath_main_esc=$(echo "$configPath_main" | sed 's/\//\\\//g')
+    export CF_CONFIGPATH_ESC_ARG="$configPath_main_esc"
+    
+    export CF_FILESIZE_ARG="$fileSize_main"
+    export CF_OS_VERSION_ARG="$osVersion_main_arg" # "Linux"
+    export CF_V2RAY_COMMAND_ARG="$v2rayCommand_local" # "v2ray"
+    export CF_TRYCOUNT_ARG="$tryCount_main"
+    export CF_DOWNTHRESHOLD_ARG="$downThreshold_main"
+    export CF_UPTHRESHOLD_ARG="$upThreshold_main"
+    export CF_DOWNLOADORUPLOAD_ARG="$downloadOrUpload_main"
+    export CF_VPNORNOT_ARG="$vpnOrNot_main"
+    export CF_QUICKORNOT_ARG="$quickOrNot_main"
+
+
+    if [[ ! -f "$subnetsFile_main" ]] && [[ "$subnetsFile_main" != "NULL" ]]; then
+        echo "Subnet file $subnetsFile_main not found. Exiting."
         exit 1
-    elif [[ "$subnetsFile" == "NULL" ]]; then
+    elif [[ "$subnetsFile_main" == "NULL" ]]; then
         echo "No subnet file provided. Please provide a subnet file using -f option. Exiting."
         exit 1
     fi
 
-    echo "Reading subnets from file $subnetsFile"
-    cfSubnetList=$(cat "$subnetsFile")
+    echo "Reading subnets from file $subnetsFile_main"
+    local cfSubnetList
+    cfSubnetList=$(cat "$subnetsFile_main")
     
-    ipListLength="0"
-    for subNet in ${cfSubnetList}
+    local ipListLength="0"
+    local subNet_loop breakedSubnets_loop maxSubnet_loop network_loop netmask_loop i_loop breakedSubnet_item_loop
+    for subNet_loop in ${cfSubnetList}
     do
-        breakedSubnets=
-        maxSubnet=24 # You can adjust this if needed, e.g., 22 for larger initial blocks
-        network=${subNet%/*}
-        netmask=${subNet#*/}
-        if [[ ${netmask} -ge ${maxSubnet} ]]
-        then
-          breakedSubnets="${breakedSubnets} ${network}/${netmask}"
+        breakedSubnets_loop= 
+        maxSubnet_loop=24 
+        network_loop=${subNet_loop%/*}
+        netmask_loop=${subNet_loop#*/}
+        if [[ ${netmask_loop} -ge ${maxSubnet_loop} ]]; then
+          breakedSubnets_loop="${breakedSubnets_loop} ${network_loop}/${netmask_loop}"
         else
-          for i in $(seq 0 $(( $(( 2 ** (maxSubnet - netmask) )) - 1 )) )
-          do
-            breakedSubnets="${breakedSubnets} $( fncLongIntToStr $(( $( fncIpToLongInt "${network}" ) + $(( 2 ** ( 32 - maxSubnet ) * i )) )) )/${maxSubnet}"
+          for i_loop in $(seq 0 $(( $(( 2 ** (maxSubnet_loop - netmask_loop) )) - 1 )) ); do
+            breakedSubnets_loop="${breakedSubnets_loop} $( fncLongIntToStr $(( $( fncIpToLongInt "${network_loop}" ) + $(( 2 ** ( 32 - maxSubnet_loop ) * i_loop )) )) )/${maxSubnet_loop}"
           done
         fi
-        breakedSubnets=$(echo "${breakedSubnets}"|tr ' ' '\n')
-        for breakedSubnet in ${breakedSubnets}
-        do
+        breakedSubnets_loop=$(echo "${breakedSubnets_loop}"|tr ' ' '\n')
+        for breakedSubnet_item_loop in ${breakedSubnets_loop} ; do
             ipListLength=$(( ipListLength+1 ))
         done
     done
 
-    passedIpsCount=0
-    for subNet in ${cfSubnetList}
+    local passedIpsCount=0
+    local ipList_loop # Renamed to avoid conflict
+    # progressBar is a global variable set by fncShowProgress
+    for subNet_loop in ${cfSubnetList}
     do
-        breakedSubnets=
-        maxSubnet=24 # Ensure this matches the value used for ipListLength calculation
-        network=${subNet%/*}
-        netmask=${subNet#*/}
-        if [[ ${netmask} -ge ${maxSubnet} ]]
-        then
-          breakedSubnets="${breakedSubnets} ${network}/${netmask}"
+        breakedSubnets_loop=
+        maxSubnet_loop=24 
+        network_loop=${subNet_loop%/*}
+        netmask_loop=${subNet_loop#*/}
+        if [[ ${netmask_loop} -ge ${maxSubnet_loop} ]]; then
+          breakedSubnets_loop="${breakedSubnets_loop} ${network_loop}/${netmask_loop}"
         else
-          for i in $(seq 0 $(( $(( 2 ** (maxSubnet - netmask) )) - 1 )) )
-          do
-            breakedSubnets="${breakedSubnets} $( fncLongIntToStr $(( $( fncIpToLongInt "${network}" ) + $(( 2 ** ( 32 - maxSubnet ) * i )) )) )/${maxSubnet}"
+          for i_loop in $(seq 0 $(( $(( 2 ** (maxSubnet_loop - netmask_loop) )) - 1 )) ); do
+            breakedSubnets_loop="${breakedSubnets_loop} $( fncLongIntToStr $(( $( fncIpToLongInt "${network_loop}" ) + $(( 2 ** ( 32 - maxSubnet_loop ) * i_loop )) )) )/${maxSubnet_loop}"
           done
         fi
-        breakedSubnets=$(echo "${breakedSubnets}"|tr ' ' '\n')
-        for breakedSubnet in ${breakedSubnets}
-        do
-            fncShowProgress "$passedIpsCount" "$ipListLength"
-            # It's generally better to manage v2ray instances per IP check within fncCheckIPList
-            # or ensure proper cleanup if a global killall is used.
-            # Consider if killall v2ray here might interfere with parallel processes.
-            # killall v2ray > /dev/null 2>&1 
-            ipList=$(fncSubnetToIP "$breakedSubnet")
-        tput cuu1; tput ed # rewrites Parallel's bar
-        if [[ $parallelVersion -gt 20220515 ]];
-        then
-          parallel --ll --bar -j "$threads" fncCheckIPList ::: "$ipList" ::: "$progressBar" ::: "$resultFile" ::: "$scriptDir" ::: "$configId" ::: "$configHost" ::: "$configPort" ::: "$configPath" ::: "$fileSize" ::: "Linux" ::: "$v2rayCommand" ::: "$tryCount" ::: "$downThreshold" ::: "$upThreshold" ::: "$downloadOrUpload" ::: "$vpnOrNot" ::: "$quickOrNot"
-        else
-          echo -e "${RED}$progressBar${NC}" # This progressBar variable is empty, might need review
-          parallel -j "$threads" fncCheckIPList ::: "$ipList" ::: "$progressBar" ::: "$resultFile" ::: "$scriptDir" ::: "$configId" ::: "$configHost" ::: "$configPort" ::: "$configPath" ::: "$fileSize" ::: "Linux" ::: "$v2rayCommand" ::: "$tryCount" ::: "$downThreshold" ::: "$upThreshold" ::: "$downloadOrUpload" ::: "$vpnOrNot" ::: "$quickOrNot"
-        fi
-            # killall v2ray > /dev/null 2>&1 # Ensure this is necessary and doesn't cause issues
+        breakedSubnets_loop=$(echo "${breakedSubnets_loop}"|tr ' ' '\n')
+        for breakedSubnet_item_loop in ${breakedSubnets_loop} ; do
+            fncShowProgress "$passedIpsCount" "$ipListLength" # Sets global progressBar
+            
+            ipList_loop=$(fncSubnetToIP "$breakedSubnet_item_loop")
+
+            tput cuu1; tput ed 
+
+            if [[ $parallelVersion -gt 20220515 ]]; then
+              parallel --ll --bar -j "$threads_main" fncCheckIPList ::: "$ipList_loop" ::: "$progressBar"
+            else
+              echo -e "${RED}$progressBar${NC}" 
+              parallel -j "$threads_main" fncCheckIPList ::: "$ipList_loop" ::: "$progressBar"
+            fi
             passedIpsCount=$(( passedIpsCount+1 ))
         done
     done
-    sort -n -k1 -t, "$resultFile" -o "$resultFile"
+    echo "" 
+    sort -n -k1 -t, "$resultFile_main" -o "$resultFile_main"
 }
 # End of Function fncMainCFFindSubnet
 
-# Function fncMainCFFindIP - This function is no longer needed as user provides subnet ranges
-# function fncMainCFFindIP { ... }
-
-# Removed clientConfigFile download as per user request
-subnetIPFile="NULL" # Will be set by -f argument
+# --- Main script execution ---
+subnetIPFile="NULL" 
 
 # Function fncUsage
-# usage function
 function fncUsage {
-    # Simplified for Linux only
     echo -e "Usage: cfScanner [ -v|--vpn-mode YES/NO ]
             [ -t|--test-type  DOWN/UP/BOTH ]
             [ -p|--thread <int> ]
@@ -597,136 +449,102 @@ function fncUsage {
 }
 # End of Function fncUsage
 
-# Removed randomNumber as per user request
-downThreshold="1"
-upThreshold="1"
-osVersion="$(fncCheckDpnd)" # Will always be Linux now
-vpnOrNot="NO"
-subnetOrIP="SUBNET" # Hardcoded as user provides subnet ranges
-downloadOrUpload="BOTH"
-threads="4"
-tryCount="1"
-config="NULL"
-speed="100" # Default speed in KBPS
-quickOrNot="NO"
+downThreshold_default="1"
+upThreshold_default="1"
+osVersion_global="$(fncCheckDpnd)" 
+vpnOrNot_default="NO"
+downloadOrUpload_default="BOTH"
+threads_default="4"
+tryCount_default="1"
+config_param="NULL" # Parameter for config file path
+speed_param="100" 
+quickOrNot_default="NO"
 
-# Simplified getopt for Linux only
+# Global progressBar, will be set by fncShowProgress
+progressBar="" 
+
 parsedArguments=$(getopt -a -n cfScanner -o v:t:p:n:c:s:d:u:f:q:h --long vpn-mode:,test-type:,thread:,tryCount:,config:,speed:,down-threshold:,up-threshold:,file:,quick:,help -- "$@")
-
 eval set -- "$parsedArguments"
-# Simplified argument parsing for Linux only
-while :
-do
+while : ; do
     case "$1" in
-        -v|--vpn-mode) vpnOrNot="$2" ; shift 2 ;;
-        -t|--test-type) downloadOrUpload="$2" ; shift 2 ;;
-        -p|--thread) threads="$2" ; shift 2 ;;
-        -n|--tryCount) tryCount="$2" ; shift 2 ;;
-        -c|--config) config="$2" ; shift 2 ;;
-        -s|--speed) speed="$2" ; shift 2 ;; # Speed argument for filtering, not directly for upload file size
-        -d|--down-threshold) downThreshold="$2" ; shift 2 ;;
-        -u|--up-threshold) upThreshold="$2" ; shift 2 ;;
+        -v|--vpn-mode) vpnOrNot_default="$2" ; shift 2 ;;
+        -t|--test-type) downloadOrUpload_default="$2" ; shift 2 ;;
+        -p|--thread) threads_default="$2" ; shift 2 ;;
+        -n|--tryCount) tryCount_default="$2" ; shift 2 ;;
+        -c|--config) config_param="$2" ; shift 2 ;;
+        -s|--speed) speed_param="$2" ; shift 2 ;; 
+        -d|--down-threshold) downThreshold_default="$2" ; shift 2 ;;
+        -u|--up-threshold) upThreshold_default="$2" ; shift 2 ;;
         -f|--file) subnetIPFile="$2" ; shift 2 ;;
-        -q|--quick) quickOrNot="$2" ; shift 2 ;;
+        -q|--quick) quickOrNot_default="$2" ; shift 2 ;;
         -h|--help) fncUsage ;;
         --) shift; break ;;
-        *) echo "Unexpected option: $1 is not acceptable"
-        fncUsage ;;
+        *) echo "Unexpected option: $1 is not acceptable"; fncUsage ;;
     esac
 done
 
-validArguments=$?
-if [ "$validArguments" != "0" ]; then
-  echo "error validate"
-  exit 2
-fi
-
-if [[ "$vpnOrNot" != "YES" && "$vpnOrNot" != "NO" ]]
-then
-    echo "Wrong value for -v: $vpnOrNot Must be YES or NO"
-    exit 2
-fi
-# Mode -m is removed as user always provides subnet ranges
-if [[ "$downloadOrUpload" != "DOWN" && "$downloadOrUpload" != "UP" && "$downloadOrUpload" != "BOTH" ]]
-then
-    echo "Wrong value for -t: $downloadOrUpload Must be DOWN or UP or BOTH"
-    exit 2
-fi
-
-if [[ "$subnetIPFile" == "NULL" ]] || [[ ! -f "$subnetIPFile" ]]
-then
-    echo "Subnet file is required and was not found or not provided. Use -f <filepath>"
-    exit 1
-fi
+if [[ "$vpnOrNot_default" != "YES" && "$vpnOrNot_default" != "NO" ]]; then echo "Wrong value for -v: $vpnOrNot_default Must be YES or NO"; exit 2; fi
+if [[ "$downloadOrUpload_default" != "DOWN" && "$downloadOrUpload_default" != "UP" && "$downloadOrUpload_default" != "BOTH" ]]; then echo "Wrong value for -t: $downloadOrUpload_default Must be DOWN or UP or BOTH"; exit 2; fi
+if [[ "$subnetIPFile" == "NULL" ]] || [[ ! -f "$subnetIPFile" ]]; then echo "Subnet file is required and was not found or not provided. Use -f <filepath>"; exit 1; fi
 
 now=$(date +"%Y%m%d-%H%M%S")
-scriptDir=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-resultDir="$scriptDir/result"
-resultFile="$resultDir/$now-result.cf"
-tempConfigDir="$scriptDir/tempConfig"
-filesDir="$tempConfigDir" # filesDir was not explicitly used, assuming it's for temp files like upload_file
+scriptDir_global=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+resultDir_global="$scriptDir_global/result"
+resultFile_global="$resultDir_global/$now-result.cf"
+tempConfigDir_global="$scriptDir_global/tempConfig"
 
-uploadFile="$filesDir/upload_file"
+uploadFile_global="$tempConfigDir_global/upload_file" # Uses tempConfigDir_global
 
-configId="NULL"
-configHost="NULL"
-configPort="NULL"
-configPath="NULL"
-
-progressBar="" # This variable is passed to fncCheckIPList but not used there for progress display.
-                # fncShowProgress is used in fncMainCFFindSubnet for overall progress.
+# These will be set by fncValidateConfig using the config_param path
+configId=""
+configHost=""
+configPort=""
+configPath=""
 
 export GREEN='\033[0;32m'
 export BLUE='\033[0;34m'
 export RED='\033[0;31m'
 export ORANGE='\033[0;33m'
 export YELLOW='\033[1;33m'
-export NC='\033[0m' # No Color
+export NC='\033[0m' 
 
-fncCreateDir "${resultDir}"
-fncCreateDir "${tempConfigDir}"
-echo "" > "$resultFile" # Initialize result file
+fncCreateDir "${resultDir_global}"
+fncCreateDir "${tempConfigDir_global}"
+echo "" > "$resultFile_global" 
 
-# Removed internet download for config file as per user request
-if [[ "$config" == "NULL" ]] || [[ ! -f "$config" ]]
-then
+if [[ "$config_param" == "NULL" ]] || [[ ! -f "$config_param" ]]; then
     echo "Config file is required and was not found or not provided. Use -c <filepath>"
     exit 1
 else
     echo ""
-    echo "using your own config $config"
-    cat "$config"
+    echo "using your own config $config_param"
+    cat "$config_param"
     echo ""
 fi
 
-# fileSize for download/upload tests. The 'speed' variable from -s is for filtering results, not for setting this size.
-# Let's use a fixed size for testing, or make it configurable if needed.
-# For example, 1MB for testing.
-# fileSize="$(( 1 * 1024 * 1024 ))" # 1MB
-# Or keep the original logic if 'speed' was intended for this:
-fileSizeForTest="$(( 2 * 100 * 1024 ))" # Defaulting to 2 * 100KB = 200KB as per original logic if speed was 100
+fncValidateConfig "$config_param" # Sets global configId, configHost, etc.
 
-if [[ "$downloadOrUpload" == "DOWN" || "$downloadOrUpload" == "BOTH" ]]
-then
-    echo "You are testing download with file size: $fileSizeForTest Bytes"
+fileSizeForTest_global="$(( 2 * 100 * 1024 ))" 
+
+if [[ "$downloadOrUpload_default" == "DOWN" ]] || [[ "$downloadOrUpload_default" == "BOTH" ]]; then
+    echo "You are testing download with file size: $fileSizeForTest_global Bytes"
 fi
-if [[ "$downloadOrUpload" == "UP" || "$downloadOrUpload" == "BOTH" ]]
-then
+if [[ "$downloadOrUpload_default" == "UP" ]] || [[ "$downloadOrUpload_default" == "BOTH" ]]; then
     echo "You are testing upload"
-    echo "making upload file by size $fileSizeForTest Bytes in $uploadFile"
-    # ddSize in KB for count if bs=1024
-    ddSizeForUpload="$(( fileSizeForTest / 1024 ))"
-    if [[ $ddSizeForUpload -eq 0 ]]; then ddSizeForUpload=1; fi # Ensure at least 1KB
-    dd if=/dev/random of="$uploadFile" bs=1024 count="$ddSizeForUpload" > /dev/null 2>&1
+    echo "making upload file by size $fileSizeForTest_global Bytes in $uploadFile_global"
+    ddSizeForUpload="$(( fileSizeForTest_global / 1024 ))"
+    if [[ $ddSizeForUpload -eq 0 ]]; then ddSizeForUpload=1; fi 
+    dd if=/dev/random of="$uploadFile_global" bs=1024 count="$ddSizeForUpload" > /dev/null 2>&1
 fi
 
-fncValidateConfig "$config" # This will populate configId, configHost, etc.
+# Call fncMainCFFindSubnet
+# The second argument (old progressBar placeholder) is still passed as per original structure,
+# though fncMainCFFindSubnet now uses global progressBar set by fncShowProgress for passing to parallel.
+fncMainCFFindSubnet "$threads_default" "$progressBar" "$resultFile_global" "$scriptDir_global" \
+    "$configId" "$configHost" "$configPort" "$configPath" \
+    "$fileSizeForTest_global" "$osVersion_global" "$subnetIPFile" "$tryCount_default" \
+    "$downThreshold_default" "$upThreshold_default" "$downloadOrUpload_default" \
+    "$vpnOrNot_default" "$quickOrNot_default"
 
-# As user always provides subnet ranges, directly call fncMainCFFindSubnet
-# Removed the if/else for subnetOrIP
-fncMainCFFindSubnet "$threads" "$progressBar" "$resultFile" "$scriptDir" "$configId" "$configHost" "$configPort" "$configPath" "$fileSizeForTest" "Linux" "$subnetIPFile" "$tryCount" "$downThreshold" "$upThreshold" "$downloadOrUpload" "$vpnOrNot" "$quickOrNot"
-
-# Cleanup temp directory
-# rm -rf "$tempConfigDir" # Consider if this is desired, or if temp files should persist for debugging.
 echo ""
-echo "Scan complete. Results are in: $resultFile"
+echo "Scan complete. Results are in: $resultFile_global"
