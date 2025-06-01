@@ -1,11 +1,11 @@
-#!/binbash -
+#!/bin/bash -
 #===============================================================================
 # REQUIREMENTS: getopt, jq, git, tput, bc, curl, parallel (version > 20220515), shuf
 # ORGANIZATION: Linux
 #===============================================================================
 
 # --- Script Version ---
-SCRIPT_VERSION="1.1.1" # Incremented version
+SCRIPT_VERSION="1.1.2" # Incremented version
 
 # --- Clear Screen ---
 clear
@@ -279,10 +279,9 @@ function fncCheckDpnd {
 
 # Function fncValidateConfig
 function fncValidateConfig {
-    local config_file_path="$1" # Renamed to avoid conflict with global 'config'
+    local config_file_path="$1" 
     if [[ -f "$config_file_path" ]]; then
         echo "reading config ..."
-        # These are intended to be global for the script
         configId=$(jq --raw-output .id "$config_file_path")
         configHost=$(jq --raw-output .host "$config_file_path")
         configPort=$(jq --raw-output .port "$config_file_path")
@@ -309,15 +308,14 @@ function fncCreateDir {
 
 # Function fncMainCFFindSubnet
 function fncMainCFFindSubnet {
-    # These are arguments passed to this function
     local threads_main="${1}"
-    # progressBar_main_arg is arg ${2} - a placeholder now, as global progressBar is used by fncShowProgress
+    # progressBar_main_arg is arg ${2} 
     local resultFile_main="${3}"
     local scriptDir_main="${4}"
-    local configId_main="${5}" # This is the global configId set by fncValidateConfig
-    local configHost_main="${6}" # This is the global configHost
-    local configPort_main="${7}" # This is the global configPort
-    local configPath_main="${8}" # This is the global configPath
+    local configId_main="${5}" 
+    local configHost_main="${6}" 
+    local configPort_main="${7}" 
+    local configPath_main="${8}" 
     local fileSize_main="${9}"
     local osVersion_main_arg="${10}" 
     local subnetsFile_main="${11}"
@@ -332,31 +330,22 @@ function fncMainCFFindSubnet {
     local parallelVersion
     parallelVersion=$(parallel --version | head -n1 | grep -Ewo '[0-9]{8}')
     
-    # Exporting variables needed by fncCheckIPList
     export CF_RESULT_FILE_ARG="$resultFile_main"
     export CF_SCRIPT_DIR_ARG="$scriptDir_main"
     export CF_CONFIGID_ARG="$configId_main"
     export CF_CONFIGHOST_ARG="$configHost_main"
     export CF_CONFIGPORT_ARG="$configPort_main"
-    # configPath_main needs to be escaped for sed in fncCheckIPList
-    # It's better to do escaping once before export or handle it carefully.
-    # For now, assume fncCheckIPList will handle its own copy or receive it escaped.
-    # Let's export the original and an escaped version if needed, or handle in fncCheckIPList.
-    # The original script escaped it inside fncCheckIPList. So we pass the original.
-    # However, for consistency, we'll pass the escaped version via env var.
     local configPath_main_esc=$(echo "$configPath_main" | sed 's/\//\\\//g')
     export CF_CONFIGPATH_ESC_ARG="$configPath_main_esc"
-    
     export CF_FILESIZE_ARG="$fileSize_main"
-    export CF_OS_VERSION_ARG="$osVersion_main_arg" # "Linux"
-    export CF_V2RAY_COMMAND_ARG="$v2rayCommand_local" # "v2ray"
+    export CF_OS_VERSION_ARG="$osVersion_main_arg"
+    export CF_V2RAY_COMMAND_ARG="$v2rayCommand_local"
     export CF_TRYCOUNT_ARG="$tryCount_main"
     export CF_DOWNTHRESHOLD_ARG="$downThreshold_main"
     export CF_UPTHRESHOLD_ARG="$upThreshold_main"
     export CF_DOWNLOADORUPLOAD_ARG="$downloadOrUpload_main"
     export CF_VPNORNOT_ARG="$vpnOrNot_main"
     export CF_QUICKORNOT_ARG="$quickOrNot_main"
-
 
     if [[ ! -f "$subnetsFile_main" ]] && [[ "$subnetsFile_main" != "NULL" ]]; then
         echo "Subnet file $subnetsFile_main not found. Exiting."
@@ -371,18 +360,20 @@ function fncMainCFFindSubnet {
     cfSubnetList=$(cat "$subnetsFile_main")
     
     local ipListLength="0"
-    local subNet_loop breakedSubnets_loop maxSubnet_loop network_loop netmask_loop i_loop breakedSubnet_item_loop
+    local subNet_loop breakedSubnets_loop network_loop netmask_loop i_loop breakedSubnet_item_loop
+    # Define maxSubnet here, changed from 24 to 22
+    local maxSubnet_loop=22 
+
     for subNet_loop in ${cfSubnetList}
     do
         breakedSubnets_loop= 
-        maxSubnet_loop=24 
         network_loop=${subNet_loop%/*}
         netmask_loop=${subNet_loop#*/}
-        if [[ ${netmask_loop} -ge ${maxSubnet_loop} ]]; then
+        if [[ ${netmask_loop} -ge ${maxSubnet_loop} ]]; then # Compare with the new maxSubnet_loop
           breakedSubnets_loop="${breakedSubnets_loop} ${network_loop}/${netmask_loop}"
         else
-          for i_loop in $(seq 0 $(( $(( 2 ** (maxSubnet_loop - netmask_loop) )) - 1 )) ); do
-            breakedSubnets_loop="${breakedSubnets_loop} $( fncLongIntToStr $(( $( fncIpToLongInt "${network_loop}" ) + $(( 2 ** ( 32 - maxSubnet_loop ) * i_loop )) )) )/${maxSubnet_loop}"
+          for i_loop in $(seq 0 $(( $(( 2 ** (maxSubnet_loop - netmask_loop) )) - 1 )) ); do # Use new maxSubnet_loop
+            breakedSubnets_loop="${breakedSubnets_loop} $( fncLongIntToStr $(( $( fncIpToLongInt "${network_loop}" ) + $(( 2 ** ( 32 - maxSubnet_loop ) * i_loop )) )) )/${maxSubnet_loop}" # Use new maxSubnet_loop
           done
         fi
         breakedSubnets_loop=$(echo "${breakedSubnets_loop}"|tr ' ' '\n')
@@ -392,24 +383,23 @@ function fncMainCFFindSubnet {
     done
 
     local passedIpsCount=0
-    local ipList_loop # Renamed to avoid conflict
-    # progressBar is a global variable set by fncShowProgress
+    local ipList_loop 
     for subNet_loop in ${cfSubnetList}
     do
         breakedSubnets_loop=
-        maxSubnet_loop=24 
         network_loop=${subNet_loop%/*}
         netmask_loop=${subNet_loop#*/}
-        if [[ ${netmask_loop} -ge ${maxSubnet_loop} ]]; then
+        # Ensure maxSubnet_loop is used consistently here as well
+        if [[ ${netmask_loop} -ge ${maxSubnet_loop} ]]; then 
           breakedSubnets_loop="${breakedSubnets_loop} ${network_loop}/${netmask_loop}"
         else
-          for i_loop in $(seq 0 $(( $(( 2 ** (maxSubnet_loop - netmask_loop) )) - 1 )) ); do
-            breakedSubnets_loop="${breakedSubnets_loop} $( fncLongIntToStr $(( $( fncIpToLongInt "${network_loop}" ) + $(( 2 ** ( 32 - maxSubnet_loop ) * i_loop )) )) )/${maxSubnet_loop}"
+          for i_loop in $(seq 0 $(( $(( 2 ** (maxSubnet_loop - netmask_loop) )) - 1 )) ); do 
+            breakedSubnets_loop="${breakedSubnets_loop} $( fncLongIntToStr $(( $( fncIpToLongInt "${network_loop}" ) + $(( 2 ** ( 32 - maxSubnet_loop ) * i_loop )) )) )/${maxSubnet_loop}" 
           done
         fi
         breakedSubnets_loop=$(echo "${breakedSubnets_loop}"|tr ' ' '\n')
         for breakedSubnet_item_loop in ${breakedSubnets_loop} ; do
-            fncShowProgress "$passedIpsCount" "$ipListLength" # Sets global progressBar
+            fncShowProgress "$passedIpsCount" "$ipListLength" 
             
             ipList_loop=$(fncSubnetToIP "$breakedSubnet_item_loop")
 
@@ -432,7 +422,6 @@ function fncMainCFFindSubnet {
 # --- Main script execution ---
 subnetIPFile="NULL" 
 
-# Function fncUsage
 function fncUsage {
     echo -e "Usage: cfScanner [ -v|--vpn-mode YES/NO ]
             [ -t|--test-type  DOWN/UP/BOTH ]
@@ -447,7 +436,6 @@ function fncUsage {
             [ -h|--help ]\n"
      exit 2
 }
-# End of Function fncUsage
 
 downThreshold_default="1"
 upThreshold_default="1"
@@ -456,11 +444,10 @@ vpnOrNot_default="NO"
 downloadOrUpload_default="BOTH"
 threads_default="4"
 tryCount_default="1"
-config_param="NULL" # Parameter for config file path
+config_param="NULL" 
 speed_param="100" 
 quickOrNot_default="NO"
 
-# Global progressBar, will be set by fncShowProgress
 progressBar="" 
 
 parsedArguments=$(getopt -a -n cfScanner -o v:t:p:n:c:s:d:u:f:q:h --long vpn-mode:,test-type:,thread:,tryCount:,config:,speed:,down-threshold:,up-threshold:,file:,quick:,help -- "$@")
@@ -493,9 +480,8 @@ resultDir_global="$scriptDir_global/result"
 resultFile_global="$resultDir_global/$now-result.cf"
 tempConfigDir_global="$scriptDir_global/tempConfig"
 
-uploadFile_global="$tempConfigDir_global/upload_file" # Uses tempConfigDir_global
+uploadFile_global="$tempConfigDir_global/upload_file" 
 
-# These will be set by fncValidateConfig using the config_param path
 configId=""
 configHost=""
 configPort=""
@@ -522,7 +508,7 @@ else
     echo ""
 fi
 
-fncValidateConfig "$config_param" # Sets global configId, configHost, etc.
+fncValidateConfig "$config_param" 
 
 fileSizeForTest_global="$(( 2 * 100 * 1024 ))" 
 
@@ -537,9 +523,6 @@ if [[ "$downloadOrUpload_default" == "UP" ]] || [[ "$downloadOrUpload_default" =
     dd if=/dev/random of="$uploadFile_global" bs=1024 count="$ddSizeForUpload" > /dev/null 2>&1
 fi
 
-# Call fncMainCFFindSubnet
-# The second argument (old progressBar placeholder) is still passed as per original structure,
-# though fncMainCFFindSubnet now uses global progressBar set by fncShowProgress for passing to parallel.
 fncMainCFFindSubnet "$threads_default" "$progressBar" "$resultFile_global" "$scriptDir_global" \
     "$configId" "$configHost" "$configPort" "$configPath" \
     "$fileSizeForTest_global" "$osVersion_global" "$subnetIPFile" "$tryCount_default" \
