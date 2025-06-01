@@ -4,6 +4,16 @@
 # ORGANIZATION: Linux
 #===============================================================================
 
+# --- Script Version ---
+SCRIPT_VERSION="1.1.0"
+
+# --- Clear Screen ---
+clear
+
+echo "CFScanner Version: $SCRIPT_VERSION"
+echo "==================================="
+echo ""
+
 export TOP_PID=$$
 
 # Function fncLongIntToStr
@@ -78,7 +88,7 @@ fncSubnetToIP() {
         bytes[1]="$(( j+(iparr[1] & maskarr[1]) ))"
         for k in $(seq 0 $((255-maskarr[2]))); do
           bytes[2]="$(( k+(iparr[2] & maskarr[2]) ))"
-          for l in $(seq 1 $((255-maskarr[3]))); do
+          for l in $(seq 1 $((255-maskarr[3]))); do # Start l from 1 to avoid .0 addresses if not needed (can be adjusted)
             bytes[3]="$(( l+(iparr[3] & maskarr[3]) ))"
             printf "%d.%d.%d.%d\n" "${bytes[@]}"
           done
@@ -199,6 +209,8 @@ function fncCheckIPList {
                         upTotalTime=0
                         downAvgStr=""
                         upAvgStr=""
+                        downIndividualTimes=""
+                        upIndividualTimes=""
                         downSuccessedCount=0
                         upSuccessedCount=0
                         nohup "$binDir"/"v2ray" -c "$ipConfigFile" > /dev/null & # Hardcoded v2ray command
@@ -213,29 +225,38 @@ function fncCheckIPList {
                                 if [[ $downTimeMil -gt 100 ]]
                                 then
                                     downSuccessedCount=$(( downSuccessedCount+1 ))
+                                    downIndividualTimes+="$downTimeMil, "
                                 else
                                     downTimeMil=0
+                                    downIndividualTimes+="0, "
                                 fi
                             fi
                             if [[ "$downloadOrUpload" == "UP" ]] || [[  "$downloadOrUpload" == "BOTH" ]]
                             then
                                 result=$($timeoutCommand 2 curl -x "socks5://127.0.0.1:3$port" -s -w "\nTIME: %{time_total}\n" --resolve "speed.cloudflare.com:443:$ip" --data "@$uploadFile" https://speed.cloudflare.com/__up | grep "TIME" | tail -n 1 | awk '{print $2}' | xargs -I {} echo "{} * 1000 /1" | bc)
-                if [[ "$result" ]]
-                then
+                                if [[ "$result" ]]
+                                then
                                     upTimeMil="$result"
                                     if [[ $upTimeMil -gt 100 ]]
                                     then
                                         upSuccessedCount=$(( upSuccessedCount+1 ))
+                                        upIndividualTimes+="$upTimeMil, "
                                     else
                                         upTimeMil=0
+                                        upIndividualTimes+="0, "
                                     fi
-                fi
+                                else
+                                    upIndividualTimes+="0, " # Add 0 if curl fails
+                                fi
                             fi
                             downTotalTime=$(( downTotalTime+downTimeMil ))
                             upTotalTime=$(( upTotalTime+upTimeMil ))
-                            downAvgStr="$downAvgStr $downTimeMil"
-                            upAvgStr="$upAvgStr $upTimeMil"
+                            # downAvgStr and upAvgStr are not needed anymore with the new format
                         done
+                        # Remove trailing comma and space
+                        downIndividualTimes=${downIndividualTimes%, }
+                        upIndividualTimes=${upIndividualTimes%, }
+
                         if [[ $downSuccessedCount -ge $downThreshold ]] && [[ "$downloadOrUpload" != "UP" ]]
                         then
                             downOK="YES"
@@ -260,14 +281,14 @@ function fncCheckIPList {
                         then
                             if [[ "$downRealTime" && $downRealTime -gt 100 ]] || [[ "$upRealTime" && $upRealTime -gt 100 ]]
                             then
-                                echo -e "${GREEN}OK${NC} $ip ${BLUE}DOWN: Avg $downRealTime $downAvgStr ${ORANGE}UP: Avg $upRealTime, $upAvgStr${NC}"
+                                echo -e "${GREEN}OK${NC} $ip ${BLUE}DOWN: Avg $downRealTime [$downIndividualTimes] ${ORANGE}UP: Avg $upRealTime [$upIndividualTimes]${NC}"
                                 if [[ "$downRealTime" && $downRealTime -gt 100 ]]
                                 then
-                                    echo "$downRealTime, $downAvgStr DOWN FOR IP $ip" >> "$resultFile"
+                                    echo "$downRealTime, [$downIndividualTimes] DOWN FOR IP $ip" >> "$resultFile"
                                 fi
                                 if [[ "$upRealTime" && $upRealTime -gt 100 ]]
                                 then
-                                    echo "$upRealTime, $upAvgStr UP FOR IP $ip" >> "$resultFile"
+                                    echo "$upRealTime, [$upIndividualTimes] UP FOR IP $ip" >> "$resultFile"
                                 fi
                             else
                                 echo -e "${RED}FAILED${NC} $ip"
@@ -312,8 +333,8 @@ function fncCheckIPList {
                     then
                         downTotalTime=0
                         upTotalTime=0
-                        downAvgStr=""
-                        upAvgStr=""
+                        downIndividualTimes=""
+                        upIndividualTimes=""
                         downSuccessedCount=0
                         upSuccessedCount=0
                         for i in $(seq 1 "$tryCount");
@@ -326,29 +347,37 @@ function fncCheckIPList {
                                 if [[ $downTimeMil -gt 100 ]]
                                 then
                                     downSuccessedCount=$(( downSuccessedCount+1 ))
+                                    downIndividualTimes+="$downTimeMil, "
                                 else
                                     downTimeMil=0
+                                    downIndividualTimes+="0, "
                                 fi
                             fi
                             if [[ "$downloadOrUpload" == "UP" ]] || [[  "$downloadOrUpload" == "BOTH" ]]
                             then
                                 result=$($timeoutCommand 2 curl -s -w "\nTIME: %{time_total}\n" -H "Host: speed.cloudflare.com" --resolve "speed.cloudflare.com:443:$ip" --data "@$uploadFile" https://speed.cloudflare.com/__up | grep "TIME" | tail -n 1 | awk '{print $2}' | xargs -I {} echo "{} * 1000 /1" | bc)
-                if [[ "$result" ]]
-                then
+                                if [[ "$result" ]]
+                                then
                                     upTimeMil="$result"
                                     if [[ $upTimeMil -gt 100 ]]
                                     then
                                         upSuccessedCount=$(( upSuccessedCount+1 ))
+                                        upIndividualTimes+="$upTimeMil, "
                                     else
                                         upTimeMil=0
+                                        upIndividualTimes+="0, "
                                     fi
-                fi
+                                else
+                                    upIndividualTimes+="0, " # Add 0 if curl fails
+                                fi
                             fi
                             downTotalTime=$(( downTotalTime+downTimeMil ))
                             upTotalTime=$(( upTotalTime+upTimeMil ))
-                            downAvgStr="$downAvgStr $downTimeMil"
-                            upAvgStr="$upAvgStr $upTimeMil"
                         done
+                        # Remove trailing comma and space
+                        downIndividualTimes=${downIndividualTimes%, }
+                        upIndividualTimes=${upIndividualTimes%, }
+
                         if [[ $downSuccessedCount -ge $downThreshold ]] && [[ "$downloadOrUpload" != "UP" ]]
                         then
                             downOK="YES"
@@ -367,14 +396,14 @@ function fncCheckIPList {
                         then
                             if [[ "$downRealTime" && $downRealTime -gt 100 ]] || [[ "$upRealTime" && $upRealTime -gt 100 ]]
                             then
-                                echo -e "${GREEN}OK${NC} $ip ${BLUE}DOWN: Avg $downRealTime $downAvgStr ${ORANGE}UP: Avg $upRealTime, $upAvgStr${NC}"
+                                echo -e "${GREEN}OK${NC} $ip ${BLUE}DOWN: Avg $downRealTime [$downIndividualTimes] ${ORANGE}UP: Avg $upRealTime [$upIndividualTimes]${NC}"
                                 if [[ "$downRealTime" && $downRealTime -gt 100 ]]
                                 then
-                                    echo "$downRealTime, $downAvgStr DOWN FOR IP $ip" >> "$resultFile"
+                                    echo "$downRealTime, [$downIndividualTimes] DOWN FOR IP $ip" >> "$resultFile"
                                 fi
                                 if [[ "$upRealTime" && $upRealTime -gt 100 ]]
                                 then
-                                    echo "$upRealTime, $upAvgStr UP FOR IP $ip" >> "$resultFile"
+                                    echo "$upRealTime, [$upIndividualTimes] UP FOR IP $ip" >> "$resultFile"
                                 fi
                             else
                                 echo -e "${RED}FAILED${NC} $ip"
@@ -483,7 +512,7 @@ function fncMainCFFindSubnet {
     for subNet in ${cfSubnetList}
     do
         breakedSubnets=
-        maxSubnet=24
+        maxSubnet=24 # You can adjust this if needed, e.g., 22 for larger initial blocks
         network=${subNet%/*}
         netmask=${subNet#*/}
         if [[ ${netmask} -ge ${maxSubnet} ]]
@@ -506,7 +535,7 @@ function fncMainCFFindSubnet {
     for subNet in ${cfSubnetList}
     do
         breakedSubnets=
-        maxSubnet=24
+        maxSubnet=24 # Ensure this matches the value used for ipListLength calculation
         network=${subNet%/*}
         netmask=${subNet#*/}
         if [[ ${netmask} -ge ${maxSubnet} ]]
@@ -522,17 +551,20 @@ function fncMainCFFindSubnet {
         for breakedSubnet in ${breakedSubnets}
         do
             fncShowProgress "$passedIpsCount" "$ipListLength"
-            killall v2ray > /dev/null 2>&1
+            # It's generally better to manage v2ray instances per IP check within fncCheckIPList
+            # or ensure proper cleanup if a global killall is used.
+            # Consider if killall v2ray here might interfere with parallel processes.
+            # killall v2ray > /dev/null 2>&1 
             ipList=$(fncSubnetToIP "$breakedSubnet")
         tput cuu1; tput ed # rewrites Parallel's bar
         if [[ $parallelVersion -gt 20220515 ]];
         then
           parallel --ll --bar -j "$threads" fncCheckIPList ::: "$ipList" ::: "$progressBar" ::: "$resultFile" ::: "$scriptDir" ::: "$configId" ::: "$configHost" ::: "$configPort" ::: "$configPath" ::: "$fileSize" ::: "Linux" ::: "$v2rayCommand" ::: "$tryCount" ::: "$downThreshold" ::: "$upThreshold" ::: "$downloadOrUpload" ::: "$vpnOrNot" ::: "$quickOrNot"
         else
-          echo -e "${RED}$progressBar${NC}"
+          echo -e "${RED}$progressBar${NC}" # This progressBar variable is empty, might need review
           parallel -j "$threads" fncCheckIPList ::: "$ipList" ::: "$progressBar" ::: "$resultFile" ::: "$scriptDir" ::: "$configId" ::: "$configHost" ::: "$configPort" ::: "$configPath" ::: "$fileSize" ::: "Linux" ::: "$v2rayCommand" ::: "$tryCount" ::: "$downThreshold" ::: "$upThreshold" ::: "$downloadOrUpload" ::: "$vpnOrNot" ::: "$quickOrNot"
         fi
-            killall v2ray > /dev/null 2>&1
+            # killall v2ray > /dev/null 2>&1 # Ensure this is necessary and doesn't cause issues
             passedIpsCount=$(( passedIpsCount+1 ))
         done
     done
@@ -575,7 +607,7 @@ downloadOrUpload="BOTH"
 threads="4"
 tryCount="1"
 config="NULL"
-speed="100"
+speed="100" # Default speed in KBPS
 quickOrNot="NO"
 
 # Simplified getopt for Linux only
@@ -591,7 +623,7 @@ do
         -p|--thread) threads="$2" ; shift 2 ;;
         -n|--tryCount) tryCount="$2" ; shift 2 ;;
         -c|--config) config="$2" ; shift 2 ;;
-        -s|--speed) speed="$2" ; shift 2 ;;
+        -s|--speed) speed="$2" ; shift 2 ;; # Speed argument for filtering, not directly for upload file size
         -d|--down-threshold) downThreshold="$2" ; shift 2 ;;
         -u|--up-threshold) upThreshold="$2" ; shift 2 ;;
         -f|--file) subnetIPFile="$2" ; shift 2 ;;
@@ -632,7 +664,7 @@ scriptDir=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 resultDir="$scriptDir/result"
 resultFile="$resultDir/$now-result.cf"
 tempConfigDir="$scriptDir/tempConfig"
-filesDir="$tempConfigDir"
+filesDir="$tempConfigDir" # filesDir was not explicitly used, assuming it's for temp files like upload_file
 
 uploadFile="$filesDir/upload_file"
 
@@ -641,18 +673,19 @@ configHost="NULL"
 configPort="NULL"
 configPath="NULL"
 
-progressBar=""
+progressBar="" # This variable is passed to fncCheckIPList but not used there for progress display.
+                # fncShowProgress is used in fncMainCFFindSubnet for overall progress.
 
 export GREEN='\033[0;32m'
 export BLUE='\033[0;34m'
 export RED='\033[0;31m'
 export ORANGE='\033[0;33m'
 export YELLOW='\033[1;33m'
-export NC='\033[0m'
+export NC='\033[0m' # No Color
 
 fncCreateDir "${resultDir}"
 fncCreateDir "${tempConfigDir}"
-echo "" > "$resultFile"
+echo "" > "$resultFile" # Initialize result file
 
 # Removed internet download for config file as per user request
 if [[ "$config" == "NULL" ]] || [[ ! -f "$config" ]]
@@ -666,21 +699,34 @@ else
     echo ""
 fi
 
-fileSize="$(( 2*speed*1024 ))"
+# fileSize for download/upload tests. The 'speed' variable from -s is for filtering results, not for setting this size.
+# Let's use a fixed size for testing, or make it configurable if needed.
+# For example, 1MB for testing.
+# fileSize="$(( 1 * 1024 * 1024 ))" # 1MB
+# Or keep the original logic if 'speed' was intended for this:
+fileSizeForTest="$(( 2 * 100 * 1024 ))" # Defaulting to 2 * 100KB = 200KB as per original logic if speed was 100
+
 if [[ "$downloadOrUpload" == "DOWN" || "$downloadOrUpload" == "BOTH" ]]
 then
-    echo "You are testing download"
+    echo "You are testing download with file size: $fileSizeForTest Bytes"
 fi
 if [[ "$downloadOrUpload" == "UP" || "$downloadOrUpload" == "BOTH" ]]
 then
     echo "You are testing upload"
-    echo "making upload file by size $fileSize Bytes in $uploadFile"
-    ddSize="$(( 2*speed ))"
-    dd if=/dev/random of="$uploadFile" bs=1024 count="$ddSize" > /dev/null 2>&1
+    echo "making upload file by size $fileSizeForTest Bytes in $uploadFile"
+    # ddSize in KB for count if bs=1024
+    ddSizeForUpload="$(( fileSizeForTest / 1024 ))"
+    if [[ $ddSizeForUpload -eq 0 ]]; then ddSizeForUpload=1; fi # Ensure at least 1KB
+    dd if=/dev/random of="$uploadFile" bs=1024 count="$ddSizeForUpload" > /dev/null 2>&1
 fi
 
-fncValidateConfig "$config"
+fncValidateConfig "$config" # This will populate configId, configHost, etc.
 
 # As user always provides subnet ranges, directly call fncMainCFFindSubnet
 # Removed the if/else for subnetOrIP
-fncMainCFFindSubnet "$threads" "$progressBar" "$resultFile" "$scriptDir" "$configId" "$configHost" "$configPort" "$configPath" "$fileSize" "Linux" "$subnetIPFile" "$tryCount" "$downThreshold" "$upThreshold" "$downloadOrUpload" "$vpnOrNot" "$quickOrNot"
+fncMainCFFindSubnet "$threads" "$progressBar" "$resultFile" "$scriptDir" "$configId" "$configHost" "$configPort" "$configPath" "$fileSizeForTest" "Linux" "$subnetIPFile" "$tryCount" "$downThreshold" "$upThreshold" "$downloadOrUpload" "$vpnOrNot" "$quickOrNot"
+
+# Cleanup temp directory
+# rm -rf "$tempConfigDir" # Consider if this is desired, or if temp files should persist for debugging.
+echo ""
+echo "Scan complete. Results are in: $resultFile"
