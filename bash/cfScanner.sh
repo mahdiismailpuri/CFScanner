@@ -5,7 +5,7 @@
 #===============================================================================
 
 # --- Script Version ---
-SCRIPT_VERSION="1.2.0" # SNI logic updated to use ClientConfig.json serverName or host
+SCRIPT_VERSION="1.2.1" # SNI logic updated to use ClientConfig.json serverName or host, and config file naming convention changed
 
 # --- Clear Screen ---
 clear
@@ -65,37 +65,37 @@ fncIpToLongInt() {
 # converts subnet to IP list
 fncSubnetToIP() {
     # shellcheck disable=SC2206
-  local network_arg=$1 
-  # shellcheck disable=SC2206
-  local network_parts=(${network_arg//\// })
+    local network_arg=$1 
     # shellcheck disable=SC2206
-  local iparr=(${network_parts[0]//./ })
-  local mask=32
-  [[ $((${#network_parts[@]})) -gt 1 ]] && mask=${network_parts[1]}
+    local network_parts=(${network_arg//\// })
+    # shellcheck disable=SC2206
+    local iparr=(${network_parts[0]//./ })
+    local mask=32
+    [[ $((${#network_parts[@]})) -gt 1 ]] && mask=${network_parts[1]}
 
-  local maskarr
+    local maskarr
     # shellcheck disable=SC2206
-  if [[ ${mask} = '\.' ]]; then  # already mask format like 255.255.255.0
-    maskarr=(${mask//./ })
-  else                           # assume CIDR like /24, convert to mask
-    if [[ $((mask)) -lt 8 ]]; then
-      maskarr=($((256-2**(8-mask))) 0 0 0)
-    elif  [[ $((mask)) -lt 16 ]]; then
-      maskarr=(255 $((256-2**(16-mask))) 0 0)
-    elif  [[ $((mask)) -lt 24 ]]; then
-      maskarr=(255 255 $((256-2**(24-mask))) 0)
-    elif [[ $((mask)) -lt 32 ]]; then
-      maskarr=(255 255 255 $((256-2**(32-mask))))
-    elif [[ ${mask} == 32 ]]; then
-      maskarr=(255 255 255 255)
-    else
-      return 1 # Invalid mask
+    if [[ ${mask} = '\.' ]]; then   # already mask format like 255.255.255.0
+        maskarr=(${mask//./ })
+    else                            # assume CIDR like /24, convert to mask
+        if [[ $((mask)) -lt 8 ]]; then
+            maskarr=($((256-2**(8-mask))) 0 0 0)
+        elif    [[ $((mask)) -lt 16 ]]; then
+            maskarr=(255 $((256-2**(16-mask))) 0 0)
+        elif    [[ $((mask)) -lt 24 ]]; then
+            maskarr=(255 255 $((256-2**(24-mask))) 0)
+        elif [[ $((mask)) -lt 32 ]]; then
+            maskarr=(255 255 255 $((256-2**(32-mask))))
+        elif [[ ${mask} == 32 ]]; then
+            maskarr=(255 255 255 255)
+        else
+            return 1 # Invalid mask
+        fi
     fi
-  fi
 
-  # correct wrong subnet masks (e.g. 240.192.255.0 to 255.255.255.0)
-  [[ ${maskarr[2]} == 255 ]] && maskarr[1]=255
-  [[ ${maskarr[1]} == 255 ]] && maskarr[0]=255
+    # correct wrong subnet masks (e.g. 240.192.255.0 to 255.255.255.0)
+    [[ ${maskarr[2]} == 255 ]] && maskarr[1]=255
+    [[ ${maskarr[1]} == 255 ]] && maskarr[0]=255
 
     local bytes=(0 0 0 0)
     for i in $(seq 0 $((255-maskarr[0]))); do
@@ -171,7 +171,8 @@ function fncCheckIPList {
                 if [[ "$domainFronting" == "0000000000" ]]; then
                     local ipConfigFile ipO1 ipO2 ipO3 ipO4 port pid
                     
-                    ipConfigFile="$tempConfigDir/config.json.$ip"
+                    # Changed config file naming convention here
+                    ipConfigFile="$tempConfigDir/$ip.config.json"
                     cp "$scriptDir"/config.json.temp "$ipConfigFile"
                     ipO1=$(echo "$ip" | awk -F '.' '{print $1}'); ipO2=$(echo "$ip" | awk -F '.' '{print $2}'); ipO3=$(echo "$ip" | awk -F '.' '{print $3}'); ipO4=$(echo "$ip" | awk -F '.' '{print $4}')
                     port=$((ipO1 + ipO2 + ipO3 + ipO4))
@@ -411,10 +412,10 @@ fncMainCFFindSubnet() {
         display_string_for_parallel="| ($x_display:$ipListLength=${z_formatted_time}) | $progressBar"
 
         if [[ $parallelVer -gt 20220515 ]]; then
-          parallel --ll --bar -j "$th_main" fncCheckIPList ::: "$ipList_current_pkg_str" ::: "$display_string_for_parallel"
+            parallel --ll --bar -j "$th_main" fncCheckIPList ::: "$ipList_current_pkg_str" ::: "$display_string_for_parallel"
         else
-          echo -e "${RED}$display_string_for_parallel${NC}" 
-          parallel -j "$th_main" fncCheckIPList ::: "$ipList_current_pkg_str" ::: "$display_string_for_parallel"
+            echo -e "${RED}$display_string_for_parallel${NC}" 
+            parallel -j "$th_main" fncCheckIPList ::: "$ipList_current_pkg_str" ::: "$display_string_for_parallel"
         fi
         
         local num_ips_in_just_processed_package=${ips_in_each_package_array[$current_package_idx]}
@@ -490,4 +491,3 @@ fncMainCFFindSubnet "$th_def" "$progressBar" "$resFile_glob" "$scrDir_glob" \
     "$fSizeTest_glob" "$osVer_glob" "$subnetIPFile" "$tryCnt_def" \
     "$downThr_def" "$upThr_def" "$dlUl_def" "$vpn_def" "$quick_def"
 echo ""; echo "Scan complete. Results: $resFile_glob"
-
