@@ -5,7 +5,7 @@
 #===============================================================================
 
 # --- Script Version ---
-SCRIPT_VERSION="1.4.1-ResultHeader" # Added a header to the result file indicating the -v mode
+SCRIPT_VERSION="1.5.0-PortCheckToggle" # Added optional port check with -k or --skip-port-check
 
 # --- Clear Screen ---
 clear
@@ -151,7 +151,7 @@ function fncCheckIPList {
     local fileSize="$CF_FILESIZE_ARG"; local tryCount="$CF_TRYCOUNT_ARG"
     local downThreshold="$CF_DOWNTHRESHOLD_ARG"; local upThreshold="$CF_UPTHRESHOLD_ARG"
     local downloadOrUpload="$CF_DOWNLOADORUPLOAD_ARG"; local vpnOrNot="$CF_VPNORNOT_ARG"
-    local quickOrNot="$CF_QUICKORNOT_ARG"
+    local quickOrNot="$CF_QUICKORNOT_ARG"; local skipPortCheck="$CF_SKIPPORTCHECK_ARG"
     local timeoutCommand domainFronting downOK upOK
     local binDir="$scriptDir/../bin"; local tempConfigDir="$scriptDir/tempConfig"
     local uploadFile="$tempConfigDir/upload_file"; timeoutCommand="timeout"
@@ -164,14 +164,14 @@ function fncCheckIPList {
             elif [[ "$downloadOrUpload" == "UP" ]]; then downOK="YES"; upOK="NO";
             elif [[ "$downloadOrUpload" == "DOWN" ]]; then downOK="NO"; upOK="YES"; fi
             
-            if $timeoutCommand 1 bash -c "</dev/tcp/$ip/443" > /dev/null 2>&1; then
+            # --- MODIFIED: Conditional port check ---
+            if [[ "$skipPortCheck" == "YES" ]] || $timeoutCommand 1 bash -c "</dev/tcp/$ip/443" > /dev/null 2>&1; then
                 if [[ "$quickOrNot" == "NO" ]]; then domainFronting=$($timeoutCommand 1 curl -k -s --tlsv1.2 -H "Host: speed.cloudflare.com" --resolve "speed.cloudflare.com:443:$ip" "https://speed.cloudflare.com/__down?bytes=10");
                 else domainFronting="0000000000"; fi
                 
                 if [[ "$domainFronting" == "0000000000" ]]; then
                     local ipConfigFile ipO1 ipO2 ipO3 ipO4 port pid
                     
-                    # Changed config file naming convention here
                     ipConfigFile="$tempConfigDir/$ip.config.json"
                     cp "$scriptDir"/config.json.temp "$ipConfigFile"
                     ipO1=$(echo "$ip" | awk -F '.' '{print $1}'); ipO2=$(echo "$ip" | awk -F '.' '{print $2}'); ipO3=$(echo "$ip" | awk -F '.' '{print $3}'); ipO4=$(echo "$ip" | awk -F '.' '{print $4}')
@@ -189,7 +189,7 @@ function fncCheckIPList {
                     local downTotalTime=0 upTotalTime=0 downIndividualTimes="" upIndividualTimes="" downSuccessedCount=0 upSuccessedCount=0 downTimeMil upTimeMil result i
                     
                     local v2ray_exec_log_file="$tempConfigDir/v2ray_exec_log.$ip.txt"
-                    > "$v2ray_exec_log_file" # Clear previous log for this IP
+                    > "$v2ray_exec_log_file"
                     nohup "$binDir"/"$v2rayCommandToRun" -c "$ipConfigFile" >> "$v2ray_exec_log_file" 2>&1 &
                     local v2ray_pid=$! 
                     sleep 2 
@@ -197,9 +197,7 @@ function fncCheckIPList {
                     if ! ps -p $v2ray_pid > /dev/null 2>&1; then
                         echo -e "${RED}V2RAY_START_FAILED${NC} $ip (Log: $v2ray_exec_log_file)"
                         if [[ -s "$v2ray_exec_log_file" ]]; then 
-                            echo "--- V2Ray Log for $ip ---"
-                            cat "$v2ray_exec_log_file"
-                            echo "-------------------------"
+                            echo "--- V2Ray Log for $ip ---"; cat "$v2ray_exec_log_file"; echo "-------------------------"
                         else
                             echo "V2Ray log file is empty or not created ($v2ray_exec_log_file)."
                         fi
@@ -236,7 +234,7 @@ function fncCheckIPList {
                         else echo -e "${RED}FAILED${NC} $ip"; fi
                     else echo -e "${RED}FAILED${NC} $ip"; fi
                 else echo -e "${RED}FAILED${NC} $ip"; fi
-            else echo -e "${RED}FAILED${NC} $ip"; fi
+            else echo -e "${RED}FAILED (Port Closed)${NC} $ip"; fi
         done
     elif [[ "$vpnOrNot" == "NO" ]]; then
         for ip in "${ipList[@]}"; do 
@@ -244,7 +242,9 @@ function fncCheckIPList {
             if [[ "$downloadOrUpload" == "BOTH" ]]; then downOK="NO"; upOK="NO";
             elif [[ "$downloadOrUpload" == "UP" ]]; then downOK="YES"; upOK="NO";
             elif [[ "$downloadOrUpload" == "DOWN" ]]; then downOK="NO"; upOK="YES"; fi
-            if $timeoutCommand 1 bash -c "</dev/tcp/$ip/443" > /dev/null 2>&1; then
+            
+            # --- MODIFIED: Conditional port check ---
+            if [[ "$skipPortCheck" == "YES" ]] || $timeoutCommand 1 bash -c "</dev/tcp/$ip/443" > /dev/null 2>&1; then
                 if [[ "$quickOrNot" == "NO" ]]; then domainFronting=$($timeoutCommand 1 curl -k -s --tlsv1.2 -H "Host: speed.cloudflare.com" --resolve "speed.cloudflare.com:443:$ip" "https://speed.cloudflare.com/__down?bytes=10");
                 else domainFronting="0000000000"; fi
                 if [[ "$domainFronting" == "0000000000" ]]; then
@@ -274,7 +274,7 @@ function fncCheckIPList {
                         else echo -e "${RED}FAILED${NC} $ip"; fi
                     else echo -e "${RED}FAILED${NC} $ip"; fi
                 else echo -e "${RED}FAILED${NC} $ip"; fi
-            else echo -e "${RED}FAILED${NC} $ip"; fi
+            else echo -e "${RED}FAILED (Port Closed)${NC} $ip"; fi
         done
     fi
 }
@@ -314,38 +314,53 @@ fncValidateConfig() {
 
 fncCreateDir() { if [ ! -d "$1" ]; then mkdir -p "$1"; fi; }
 
-fncMainCFFindSubnet() {
-    local th_main="$1" resFile_main="$3" scrDir_main="$4" cfgId_main="$5" cfgHost_main="$6"
-    local cfgPort_main="$7" cfgPath_main="$8" fSize_main="$9" osVer_main_arg="${10}"
-    local subnetsFile_main="${11}" tryCnt_main="${12}" downThr_main="${13}" upThr_main="${14}"
-    local dlUl_main="${15}" vpn_main="${16}" quick_main="${17}"
-    
-    local v2rayCommandToRun_main="v2ray"
-    local parallelVer; parallelVer=$(parallel --version | head -n1 | grep -Ewo '[0-9]{8}')
-    
-    export CF_RESULT_FILE_ARG="$resFile_main"; export CF_SCRIPT_DIR_ARG="$scrDir_main"
-    export CF_CONFIGID_ARG="$cfgId_main"; export CF_CONFIGHOST_ARG="$cfgHost_main"
-    export CF_CONFIGPORT_ARG="$cfgPort_main"
-    local cfgPath_main_esc=$(echo "$cfgPath_main" | sed 's/\//\\\//g')
-    export CF_CONFIGPATH_ESC_ARG="$cfgPath_main_esc"; export CF_FILESIZE_ARG="$fSize_main"
-    export CF_OS_VERSION_ARG="$osVer_main_arg"; export CF_V2RAY_COMMAND_ARG="$v2rayCommandToRun_main"
-    export CF_TRYCOUNT_ARG="$tryCnt_main"; export CF_DOWNTHRESHOLD_ARG="$downThr_main"
-    export CF_UPTHRESHOLD_ARG="$upThr_main"; export CF_DOWNLOADORUPLOAD_ARG="$dlUl_main"
-    export CF_VPNORNOT_ARG="$vpn_main"; export CF_QUICKORNOT_ARG="$quick_main"
-    export CF_ACTUAL_SNI_ARG="$configServerName_FromFile" 
+# --- This function is now the single entry point for passing arguments ---
+function runScan {
+    local threads="$1" progressBar="$2" resultFile="$3" scriptDir="$4" \
+          configId="$5" configHost="$6" configPort="$7" configPath="$8" \
+          fileSize="$9" osVersion="${10}" inputFile="${11}" tryCount="${12}" \
+          downThreshold="${13}" upThreshold="${14}" downloadOrUpload="${15}" \
+          vpnOrNot="${16}" quickOrNot="${17}" skipPortCheck="${18}" mode="${19}"
 
-    if [[ ! -f "$subnetsFile_main" ]] && [[ "$subnetsFile_main" != "NULL" ]]; then echo "Subnet file $subnetsFile_main not found"; exit 1;
-    elif [[ "$subnetsFile_main" == "NULL" ]]; then echo "No subnet file. Use -f"; exit 1; fi
+    # Export all variables needed by fncCheckIPList
+    export CF_RESULT_FILE_ARG="$resultFile"
+    export CF_SCRIPT_DIR_ARG="$scriptDir"
+    export CF_CONFIGID_ARG="$configId"
+    export CF_CONFIGHOST_ARG="$configHost"
+    export CF_CONFIGPORT_ARG="$configPort"
+    local configPath_esc=$(echo "$configPath" | sed 's/\//\\\//g')
+    export CF_CONFIGPATH_ESC_ARG="$configPath_esc"
+    export CF_FILESIZE_ARG="$fileSize"
+    export CF_OS_VERSION_ARG="$osVersion"
+    export CF_V2RAY_COMMAND_ARG="v2ray"
+    export CF_TRYCOUNT_ARG="$tryCount"
+    export CF_DOWNTHRESHOLD_ARG="$downThreshold"
+    export CF_UPTHRESHOLD_ARG="$upThreshold"
+    export CF_DOWNLOADORUPLOAD_ARG="$downloadOrUpload"
+    export CF_VPNORNOT_ARG="$vpnOrNot"
+    export CF_QUICKORNOT_ARG="$quickOrNot"
+    export CF_SKIPPORTCHECK_ARG="$skipPortCheck"
+    export CF_ACTUAL_SNI_ARG="$configServerName_FromFile"
+    
+    if [[ "$mode" == "SUBNET" ]]; then
+        fncMainCFFindSubnet "$threads" "$resultFile" "$scriptDir" "$inputFile"
+    elif [[ "$mode" == "IP" ]]; then
+        fncMainCFFindIP "$threads" "$resultFile" "$scriptDir" "$inputFile"
+    fi
+}
+
+fncMainCFFindSubnet() {
+    local th_main="$1" resFile_main="$2" scrDir_main="$3" subnetsFile_main="$4"
+    local parallelVer; parallelVer=$(parallel --version | head -n1 | grep -Ewo '[0-9]{8}')
     
     echo "Reading subnets from file $subnetsFile_main"
     local cfSubnetList; cfSubnetList=$(cat "$subnetsFile_main")
 
-    # --- NEW: Clean the input file ---
+    # --- Clean the input file ---
     echo "Cleaning up the input file to extract valid IP ranges..."
     cfSubnetList=$(echo "$cfSubnetList" | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}')
     local count=$(echo "$cfSubnetList" | wc -w)
     echo "$count valid IP ranges extracted."
-    # --- END NEW ---
 
     local maxSubnet_loop=22 
     local all_processing_packages=() 
@@ -356,6 +371,7 @@ fncMainCFFindSubnet() {
     echo "Calculating total IPs and preparing packages..."
     for sn_loop in ${cfSubnetList}; do
         brk_sn_loop=""; nw_loop=${sn_loop%/*}; nm_loop=${sn_loop#*/}
+        if [[ -z "$nw_loop" || -z "$nm_loop" ]]; then continue; fi # Skip invalid lines
         if [[ ${nm_loop} -ge ${maxSubnet_loop} ]]; then 
             brk_sn_loop="${brk_sn_loop} ${nw_loop}/${nm_loop}"
         else
@@ -379,10 +395,8 @@ fncMainCFFindSubnet() {
     done
     
     local ipListLength=${#all_processing_packages[@]} 
-    if [[ $ipListLength -eq 0 && -n "${cfSubnetList}" && "${cfSubnetList//[[:space:]]/}" != "" ]]; then 
-        echo "Warning: No processable subnet packages generated from input file, though input was provided."
-    elif [[ $ipListLength -eq 0 ]]; then
-        echo "No subnets to process from input file."
+    if [[ $ipListLength -eq 0 ]]; then
+        echo "No processable subnets found in the file."
         return
     fi
     echo "Total IP packages to process (y): $ipListLength"
@@ -390,7 +404,7 @@ fncMainCFFindSubnet() {
 
     local start_time_overall=$(date +%s)
     local scanned_individual_ips_count=0 
-    local current_package_idx ipList_current_pkg_str x_display z_formatted_time display_string_for_parallel
+    local current_package_idx ipList_current_pkg_str x_display z_formatted_time
     
     for (( current_package_idx=0; current_package_idx<ipListLength; current_package_idx++ )); do
         local breakedSubnet_item_current="${all_processing_packages[$current_package_idx]}"
@@ -413,18 +427,15 @@ fncMainCFFindSubnet() {
             fi
         fi
         
-        fncShowProgress "$current_package_idx" "$ipListLength" # Sets global progressBar
-
+        fncShowProgress "$current_package_idx" "$ipListLength"
         ipList_current_pkg_str=$(fncSubnetToIP "$breakedSubnet_item_current") 
         tput cuu1; tput ed
         
-        display_string_for_parallel="| ($x_display:$ipListLength=${z_formatted_time}) | $progressBar"
-
         if [[ $parallelVer -gt 20220515 ]]; then
-            parallel --ll --bar -j "$th_main" fncCheckIPList ::: "$ipList_current_pkg_str" ::: "$display_string_for_parallel"
+            parallel --ll --bar -j "$th_main" fncCheckIPList ::: "$ipList_current_pkg_str"
         else
-            echo -e "${RED}$display_string_for_parallel${NC}" 
-            parallel -j "$th_main" fncCheckIPList ::: "$ipList_current_pkg_str" ::: "$display_string_for_parallel"
+            echo -e "${RED}| ($x_display:$ipListLength=${z_formatted_time}) | $progressBar${NC}" 
+            parallel -j "$th_main" fncCheckIPList ::: "$ipList_current_pkg_str"
         fi
         
         local num_ips_in_just_processed_package=${ips_in_each_package_array[$current_package_idx]}
@@ -435,28 +446,10 @@ fncMainCFFindSubnet() {
     sort -n -k1 -t, "$resFile_main" -o "$resFile_main"
 }
 
-# Function fncMainCFFindIP (New function to handle individual IPs)
-function fncMainCFFindIP {
-	local threads_ip="$1" resFile_ip="$3" scrDir_ip="$4" cfgId_ip="$5" cfgHost_ip="$6"
-    local cfgPort_ip="$7" cfgPath_ip="$8" fSize_ip="$9" osVer_ip_arg="${10}"
-    local ipFile_main="${11}" tryCnt_ip="${12}" downThr_ip="${13}" upThr_ip="${14}"
-    local dlUl_ip="${15}" vpn_ip="${16}" quick_ip="${17}"
-
-	local v2rayCommandToRun_ip="v2ray"
+fncMainCFFindIP() {
+	local threads_ip="$1" resFile_ip="$2" scrDir_ip="$3" ipFile_main="$4"
 	local parallelVer; parallelVer=$(parallel --version | head -n1 | grep -Ewo '[0-9]{8}')
-
-    export CF_RESULT_FILE_ARG="$resFile_ip"; export CF_SCRIPT_DIR_ARG="$scrDir_ip"
-    export CF_CONFIGID_ARG="$cfgId_ip"; export CF_CONFIGHOST_ARG="$cfgHost_ip"
-    export CF_CONFIGPORT_ARG="$cfgPort_ip"
-    local cfgPath_ip_esc=$(echo "$cfgPath_ip" | sed 's/\//\\\//g')
-    export CF_CONFIGPATH_ESC_ARG="$cfgPath_ip_esc"; export CF_FILESIZE_ARG="$fSize_ip"
-    export CF_OS_VERSION_ARG="$osVer_ip_arg"; export CF_V2RAY_COMMAND_ARG="$v2rayCommandToRun_ip"
-    export CF_TRYCOUNT_ARG="$tryCnt_ip"; export CF_DOWNTHRESHOLD_ARG="$downThr_ip"
-    export CF_UPTHRESHOLD_ARG="$upThr_ip"; export CF_DOWNLOADORUPLOAD_ARG="$dlUl_ip"
-    export CF_VPNORNOT_ARG="$vpn_ip"; export CF_QUICKORNOT_ARG="$quick_ip"
-    export CF_ACTUAL_SNI_ARG="$configServerName_FromFile" 
-
-	if [[ ! -f "$ipFile_main" ]]; then echo "IP file $ipFile_main not found"; exit 1; fi
+    
 	echo "Reading IPs from file $ipFile_main"
 	local cfIPList; cfIPList=$(cat "$ipFile_main")
 
@@ -475,11 +468,11 @@ function fncMainCFFindIP {
 # --- Main script execution ---
 subnetIPFile="NULL"; downThr_def="1"; upThr_def="1"; osVer_glob="$(fncCheckDpnd)" 
 vpn_def="NO"; dlUl_def="BOTH"; th_def="4"; tryCnt_def="1"; cfg_param="NULL" 
-speed_param="100"; quick_def="NO"; progressBar=""; subnetOrIP_def="SUBNET"
+speed_param="100"; quick_def="NO"; subnetOrIP_def="SUBNET"; skipPortCheck_def="NO"
 
 configId=""; configHost=""; configPort=""; configPath=""; configServerName_FromFile=""
 
-parsedArgs=$(getopt -a -n cfScanner -o v:m:t:p:n:c:s:d:u:f:q:h --long vpn-mode:,mode:,test-type:,thread:,tryCount:,config:,speed:,down-threshold:,up-threshold:,file:,quick:,help -- "$@")
+parsedArgs=$(getopt -a -n cfScanner -o v:m:t:p:n:c:s:d:u:f:q:k:h --long vpn-mode:,mode:,test-type:,thread:,tryCount:,config:,speed:,down-threshold:,up-threshold:,file:,quick:,skip-port-check:,help -- "$@")
 eval set -- "$parsedArgs"
 while : ; do case "$1" in
     -v|--vpn-mode) vpn_def="$2";shift 2;;
@@ -493,16 +486,20 @@ while : ; do case "$1" in
     -u|--up-threshold) upThr_def="$2";shift 2;;
     -f|--file) subnetIPFile="$2";shift 2;; 
     -q|--quick) quick_def="$2";shift 2;;
+    -k|--skip-port-check) skipPortCheck_def="$2";shift 2;;
     -h|--help) fncUsage;; 
     --) shift;break;; 
     *) echo "Opt err: $1";fncUsage;; esac
 done
 
-if [[ "$vpn_def" != "YES" && "$vpn_def" != "NO" ]]; then echo "Err -v"; exit 2; fi
-if [[ "$subnetOrIP_def" != "SUBNET" && "$subnetOrIP_def" != "IP" ]]; then echo "Err -m"; exit 2; fi
-if [[ "$dlUl_def" != "DOWN" && "$dlUl_def" != "UP" && "$dlUl_def" != "BOTH" ]]; then echo "Err -t"; exit 2; fi
+# --- Validate arguments ---
+if [[ "$vpn_def" != "YES" && "$vpn_def" != "NO" ]]; then echo "Err -v: Must be YES or NO"; exit 2; fi
+if [[ "$subnetOrIP_def" != "SUBNET" && "$subnetOrIP_def" != "IP" ]]; then echo "Err -m: Must be SUBNET or IP"; exit 2; fi
+if [[ "$dlUl_def" != "DOWN" && "$dlUl_def" != "UP" && "$dlUl_def" != "BOTH" ]]; then echo "Err -t: Must be DOWN, UP, or BOTH"; exit 2; fi
+if [[ "$skipPortCheck_def" != "YES" && "$skipPortCheck_def" != "NO" ]]; then echo "Err -k: Must be YES or NO"; exit 2; fi
 if [[ "$subnetIPFile" == "NULL" ]] || [[ ! -f "$subnetIPFile" ]]; then echo "Err -f: File not provided or not found"; exit 1; fi
 
+# --- Setup directories and files ---
 now=$(date +"%Y%m%d-%H%M%S"); scrDir_glob=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 resDir_glob="$scrDir_glob/result"; resFile_glob="$resDir_glob/$now-result.cf"
 tmpCfgDir_glob="$scrDir_glob/tempConfig"; uplFile_glob="$tmpCfgDir_glob/upload_file" 
@@ -511,12 +508,18 @@ export GREEN='\033[0;32m'; export BLUE='\033[0;34m'; export RED='\033[0;31m'
 export ORANGE='\033[0;33m'; export YELLOW='\033[1;33m'; export NC='\033[0m' 
 fncCreateDir "${resDir_glob}"; fncCreateDir "${tmpCfgDir_glob}"; 
 
-# --- NEW: Add header to the result file ---
-if ! echo "# Scan Mode: -v $vpn_def" > "$resFile_glob" 2>/dev/null; then
+# --- Create result file with header ---
+header1="# Scan Mode: -v $vpn_def"
+header2="# Port 443 Check: ENABLED"
+if [[ "$skipPortCheck_def" == "YES" ]]; then
+    header2="# Port 443 Check: SKIPPED"
+fi
+
+if ! { echo "$header1"; echo "$header2"; } > "$resFile_glob" 2>/dev/null; then
     echo "Error: Cannot write to result file '$resFile_glob'. Permission denied or path issue."
     resFile_glob="./$now-result.cf" 
     echo "Attempting to write result file to current directory: $resFile_glob"
-    if ! echo "# Scan Mode: -v $vpn_def" > "$resFile_glob"; then
+    if ! { echo "$header1"; echo "$header2"; } > "$resFile_glob"; then
         echo "Error: Still cannot write result file. Please check permissions."
         exit 1
     fi
@@ -536,18 +539,10 @@ if [[ "$dlUl_def" == "UP" ]] || [[ "$dlUl_def" == "BOTH" ]]; then
 fi
 
 # --- Main Logic Branch ---
-if [[ "$subnetOrIP_def" == "SUBNET" ]]; then
-    echo "Mode: SUBNET"
-    fncMainCFFindSubnet "$th_def" "$progressBar" "$resFile_glob" "$scrDir_glob" \
-        "$configId" "$configHost" "$configPort" "$configPath" \
-        "$fSizeTest_glob" "$osVer_glob" "$subnetIPFile" "$tryCnt_def" \
-        "$downThr_def" "$upThr_def" "$dlUl_def" "$vpn_def" "$quick_def"
-elif [[ "$subnetOrIP_def" == "IP" ]]; then
-    echo "Mode: IP"
-    fncMainCFFindIP "$th_def" "$progressBar" "$resFile_glob" "$scrDir_glob" \
-        "$configId" "$configHost" "$configPort" "$configPath" \
-        "$fSizeTest_glob" "$osVer_glob" "$subnetIPFile" "$tryCnt_def" \
-        "$downThr_def" "$upThr_def" "$dlUl_def" "$vpn_def" "$quick_def"
-fi
+echo "Mode: $subnetOrIP_def"
+runScan "$th_def" "" "$resFile_glob" "$scrDir_glob" \
+    "$configId" "$configHost" "$configPort" "$configPath" \
+    "$fSizeTest_glob" "$osVer_glob" "$subnetIPFile" "$tryCnt_def" \
+    "$downThr_def" "$upThr_def" "$dlUl_def" "$vpn_def" "$quick_def" "$skipPortCheck_def" "$subnetOrIP_def"
 
 echo ""; echo "Scan complete. Results: $resFile_glob"
