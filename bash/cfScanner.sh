@@ -5,7 +5,7 @@
 #===============================================================================
 
 # --- Script Version ---
-SCRIPT_VERSION="1.3.0-IPMode" # Re-introduced IP Mode (-m IP) and added related logic
+SCRIPT_VERSION="1.4.0-Cleaner" # Added automatic input file cleaning for SUBNET mode
 
 # --- Clear Screen ---
 clear
@@ -285,6 +285,7 @@ fncCheckDpnd() {
     command -v parallel >/dev/null 2>&1 || { echo >&2 "parallel required"; kill -s 1 "$TOP_PID"; }
     command -v bc >/dev/null 2>&1 || { echo >&2 "bc required"; kill -s 1 "$TOP_PID"; }
     command -v timeout >/dev/null 2>&1 || { echo >&2 "timeout required"; kill -s 1 "$TOP_PID"; }
+    command -v grep >/dev/null 2>&1 || { echo >&2 "grep required"; kill -s 1 "$TOP_PID"; }
     echo "Linux" 
 }
 
@@ -335,9 +336,17 @@ fncMainCFFindSubnet() {
 
     if [[ ! -f "$subnetsFile_main" ]] && [[ "$subnetsFile_main" != "NULL" ]]; then echo "Subnet file $subnetsFile_main not found"; exit 1;
     elif [[ "$subnetsFile_main" == "NULL" ]]; then echo "No subnet file. Use -f"; exit 1; fi
+    
     echo "Reading subnets from file $subnetsFile_main"
     local cfSubnetList; cfSubnetList=$(cat "$subnetsFile_main")
-    
+
+    # --- NEW: Clean the input file ---
+    echo "Cleaning up the input file to extract valid IP ranges..."
+    cfSubnetList=$(echo "$cfSubnetList" | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}')
+    local count=$(echo "$cfSubnetList" | wc -w)
+    echo "$count valid IP ranges extracted."
+    # --- END NEW ---
+
     local maxSubnet_loop=22 
     local all_processing_packages=() 
     local ips_in_each_package_array=() 
