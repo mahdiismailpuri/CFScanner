@@ -5,7 +5,7 @@
 #===============================================================================
 
 # --- Script Version ---
-SCRIPT_VERSION="1.4.0-Cleaner" # Added automatic input file cleaning for SUBNET mode
+SCRIPT_VERSION="1.4.1-ResultHeader" # Added a header to the result file indicating the -v mode
 
 # --- Clear Screen ---
 clear
@@ -511,11 +511,12 @@ export GREEN='\033[0;32m'; export BLUE='\033[0;34m'; export RED='\033[0;31m'
 export ORANGE='\033[0;33m'; export YELLOW='\033[1;33m'; export NC='\033[0m' 
 fncCreateDir "${resDir_glob}"; fncCreateDir "${tmpCfgDir_glob}"; 
 
-if ! echo "" > "$resFile_glob" 2>/dev/null; then
+# --- NEW: Add header to the result file ---
+if ! echo "# Scan Mode: -v $vpn_def" > "$resFile_glob" 2>/dev/null; then
     echo "Error: Cannot write to result file '$resFile_glob'. Permission denied or path issue."
     resFile_glob="./$now-result.cf" 
     echo "Attempting to write result file to current directory: $resFile_glob"
-    if ! echo "" > "$resFile_glob"; then
+    if ! echo "# Scan Mode: -v $vpn_def" > "$resFile_glob"; then
         echo "Error: Still cannot write result file. Please check permissions."
         exit 1
     fi
