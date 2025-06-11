@@ -5,7 +5,7 @@
 #===============================================================================
 
 # --- Script Version ---
-SCRIPT_VERSION="1.6.0-AutoRank" # Added automatic result ranking table at the end
+SCRIPT_VERSION="1.7.0-IPdedupe" # Added duplicate IP removal for -m IP mode
 
 # --- Clear Screen ---
 clear
@@ -164,7 +164,6 @@ function fncCheckIPList {
             elif [[ "$downloadOrUpload" == "UP" ]]; then downOK="YES"; upOK="NO";
             elif [[ "$downloadOrUpload" == "DOWN" ]]; then downOK="NO"; upOK="YES"; fi
 
-            # --- MODIFIED: Conditional port check ---
             if [[ "$skipPortCheck" == "YES" ]] || $timeoutCommand 1 bash -c "</dev/tcp/$ip/443" > /dev/null 2>&1; then
                 if [[ "$quickOrNot" == "NO" ]]; then domainFronting=$($timeoutCommand 1 curl -k -s --tlsv1.2 -H "Host: speed.cloudflare.com" --resolve "speed.cloudflare.com:443:$ip" "https://speed.cloudflare.com/__down?bytes=10");
                 else domainFronting="0000000000"; fi
@@ -243,7 +242,6 @@ function fncCheckIPList {
             elif [[ "$downloadOrUpload" == "UP" ]]; then downOK="YES"; upOK="NO";
             elif [[ "$downloadOrUpload" == "DOWN" ]]; then downOK="NO"; upOK="YES"; fi
 
-            # --- MODIFIED: Conditional port check ---
             if [[ "$skipPortCheck" == "YES" ]] || $timeoutCommand 1 bash -c "</dev/tcp/$ip/443" > /dev/null 2>&1; then
                 if [[ "$quickOrNot" == "NO" ]]; then domainFronting=$($timeoutCommand 1 curl -k -s --tlsv1.2 -H "Host: speed.cloudflare.com" --resolve "speed.cloudflare.com:443:$ip" "https://speed.cloudflare.com/__down?bytes=10");
                 else domainFronting="0000000000"; fi
@@ -286,6 +284,8 @@ fncCheckDpnd() {
     command -v bc >/dev/null 2>&1 || { echo >&2 "bc required"; kill -s 1 "$TOP_PID"; }
     command -v timeout >/dev/null 2>&1 || { echo >&2 "timeout required"; kill -s 1 "$TOP_PID"; }
     command -v grep >/dev/null 2>&1 || { echo >&2 "grep required"; kill -s 1 "$TOP_PID"; }
+    command -v sort >/dev/null 2>&1 || { echo >&2 "sort required"; kill -s 1 "$TOP_PID"; }
+    command -v wc >/dev/null 2>&1 || { echo >&2 "wc required"; kill -s 1 "$TOP_PID"; }
     echo "Linux"
 }
 
@@ -314,26 +314,22 @@ fncValidateConfig() {
 
 fncCreateDir() { if [ ! -d "$1" ]; then mkdir -p "$1"; fi; }
 
-# --- NEW: Function to rank results ---
 function fncRankResults {
     local result_file="$1"
-    local total_tests="$2"
     
     if [ ! -s "$result_file" ]; then
         echo "Result file is empty. No ranking to display."
         return
     fi
 
-    # Use awk to process the result file and consolidate data for each IP
     local consolidated_data
-    consolidated_data=$(awk -v total_tests="$total_tests" '
+    consolidated_data=$(awk '
     BEGIN { FS = "[,[:space:]]+" }
     !/^#/ {
         ip = $NF;
         type = $(NF-3);
         avg_time = $1;
         
-        # Count successes from the array like [813, 809, 0]
         success_count = 0;
         match($0, /\[([^\]]+)\]/, arr);
         split(arr[1], times, /[, ]+/);
@@ -367,7 +363,6 @@ function fncRankResults {
             total_success = d_succ + u_succ;
             combined_time = d_avg + u_avg;
             
-            # Output format for sorting: TotalSuccess CombinedTime IP ...
             print total_success, combined_time, ip, d_avg, u_avg, d_succ, u_succ;
         }
     }' "$result_file")
@@ -377,11 +372,9 @@ function fncRankResults {
         return
     fi
     
-    # Sort the data: 1st by total successes (desc), 2nd by combined time (asc)
     local sorted_data
     sorted_data=$(echo "$consolidated_data" | sort -k1,1nr -k2,2n)
     
-    # Print the final ranked table
     echo ""
     echo "--- Final Ranking (Best to Worst) ---"
     printf "%-18s | %-15s | %-15s | %-10s | %-10s | %-12s | %-12s\n" "IP_Address" "Total_Success" "Combined_Time" "Down_Avg" "Up_Avg" "D_Success" "U_Success"
@@ -394,7 +387,6 @@ function fncRankResults {
 }
 
 
-# --- This function is now the single entry point for passing arguments ---
 function runScan {
     local threads="$1" resultFile="$3" scriptDir="$4" \
           configId="$5" configHost="$6" configPort="$7" configPath="$8" \
@@ -402,7 +394,6 @@ function runScan {
           downThreshold="${13}" upThreshold="${14}" downloadOrUpload="${15}" \
           vpnOrNot="${16}" quickOrNot="${17}" skipPortCheck="${18}" mode="${19}"
 
-    # Export all variables needed by fncCheckIPList
     export CF_RESULT_FILE_ARG="$resultFile"
     export CF_SCRIPT_DIR_ARG="$scriptDir"
     export CF_CONFIGID_ARG="$configId"
@@ -437,7 +428,6 @@ fncMainCFFindSubnet() {
     echo "Reading subnets from file $subnetsFile_main"
     local cfSubnetList; cfSubnetList=$(cat "$subnetsFile_main")
 
-    # --- Clean the input file ---
     echo "Cleaning up the input file to extract valid IP ranges..."
     cfSubnetList=$(echo "$cfSubnetList" | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}')
     local count
@@ -527,25 +517,36 @@ fncMainCFFindSubnet() {
     done
 
     if [[ $ipListLength -gt 0 ]]; then echo ""; fi
-    sort -n -k1 -t, "$resFile_main" -o "$resFile_main"
 }
 
 fncMainCFFindIP() {
-	local threads_ip="$1" ipFile_main="$4"
-	local parallelVer; parallelVer=$(parallel --version | head -n1 | grep -Ewo '[0-9]{8}')
+    local threads_ip="$1" ipFile_main="$4"
+    local parallelVer; parallelVer=$(parallel --version | head -n1 | grep -Ewo '[0-9]{8}')
 
-	echo "Reading IPs from file $ipFile_main"
-	local cfIPList; cfIPList=$(cat "$ipFile_main")
+    echo "Reading IPs from file $ipFile_main"
+    # --- NEW: De-duplicate IP list ---
+    local rawIPList; rawIPList=$(grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' "$ipFile_main")
+    local total_count; total_count=$(echo "$rawIPList" | wc -l)
+    local cfIPList; cfIPList=$(echo "$rawIPList" | sort -u)
+    local unique_count; unique_count=$(echo "$cfIPList" | wc -l)
+    local duplicates_removed=$((total_count - unique_count))
 
-	tput cuu1; tput ed
-	if [[ $parallelVer -gt 20220515 ]];
-	then
-	  parallel --ll --bar -j "$threads_ip" fncCheckIPList ::: "$cfIPList"
-	else
-	  echo -e "${RED}Scanning IPs...${NC}"
-	  parallel -j "$threads_ip" fncCheckIPList ::: "$cfIPList"
-	fi
+    if [[ $duplicates_removed -gt 0 ]]; then
+        echo "$duplicates_removed duplicate IPs were found and removed."
+    fi
+    echo "$unique_count unique IPs will be scanned."
+    # --- END NEW ---
+
+    tput cuu1; tput ed
+    if [[ $parallelVer -gt 20220515 ]];
+    then
+      parallel --ll --bar -j "$threads_ip" fncCheckIPList ::: "$cfIPList"
+    else
+      echo -e "${RED}Scanning IPs...${NC}"
+      parallel -j "$threads_ip" fncCheckIPList ::: "$cfIPList"
+    fi
 }
+
 
 # --- Main script execution ---
 subnetIPFile="NULL"; downThr_def="1"; upThr_def="1"; osVer_glob="$(fncCheckDpnd)"
@@ -586,7 +587,7 @@ now=$(date +"%Y%m%d-%H%M%S"); scrDir_glob=$( cd -- "$( dirname -- "${BASH_SOURCE
 resDir_glob="$scrDir_glob/result"; resFile_glob="$resDir_glob/$now-result.cf"
 tmpCfgDir_glob="$scrDir_glob/tempConfig"; uplFile_glob="$tmpCfgDir_glob/upload_file"
 
-export GREEN='\033[0;32m'; export BLUE='\033[0;34m'; export RED='\03d[0;31m'
+export GREEN='\033[0;32m'; export BLUE='\033[0;34m'; export RED='\033[0;31m'
 export ORANGE='\033[0;33m'; export YELLOW='\033[1;33m'; export NC='\033[0m'
 fncCreateDir "${resDir_glob}"; fncCreateDir "${tmpCfgDir_glob}";
 
@@ -630,4 +631,5 @@ runScan "$th_def" "" "$resFile_glob" "$scrDir_glob" \
 echo ""; echo "Scan complete. Results saved in: $resFile_glob"
 
 # --- Final Ranking ---
-fncRankResults "$resFile_glob" "$tryCnt_def"
+fncRankResults "$resFile_glob"
+
