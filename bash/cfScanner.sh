@@ -5,7 +5,7 @@
 #===============================================================================
 
 # --- Script Version ---
-SCRIPT_VERSION="1.7.0-IPdedupe" # Added duplicate IP removal for -m IP mode
+SCRIPT_VERSION="1.7.1-PreserveOrder" # Now preserves original file order in IP mode
 
 # --- Clear Screen ---
 clear
@@ -286,6 +286,7 @@ fncCheckDpnd() {
     command -v grep >/dev/null 2>&1 || { echo >&2 "grep required"; kill -s 1 "$TOP_PID"; }
     command -v sort >/dev/null 2>&1 || { echo >&2 "sort required"; kill -s 1 "$TOP_PID"; }
     command -v wc >/dev/null 2>&1 || { echo >&2 "wc required"; kill -s 1 "$TOP_PID"; }
+    command -v awk >/dev/null 2>&1 || { echo >&2 "awk required"; kill -s 1 "$TOP_PID"; }
     echo "Linux"
 }
 
@@ -390,9 +391,8 @@ function fncRankResults {
 function runScan {
     local threads="$1" resultFile="$3" scriptDir="$4" \
           configId="$5" configHost="$6" configPort="$7" configPath="$8" \
-          fileSize="$9" osVersion="${10}" inputFile="${11}" tryCount="${12}" \
-          downThreshold="${13}" upThreshold="${14}" downloadOrUpload="${15}" \
-          vpnOrNot="${16}" quickOrNot="${17}" skipPortCheck="${18}" mode="${19}"
+          fileSize="$9" osVersion="${10}" inputFile="${11}" \
+          mode="${12}"
 
     export CF_RESULT_FILE_ARG="$resultFile"
     export CF_SCRIPT_DIR_ARG="$scriptDir"
@@ -405,24 +405,24 @@ function runScan {
     export CF_FILESIZE_ARG="$fileSize"
     export CF_OS_VERSION_ARG="$osVersion"
     export CF_V2RAY_COMMAND_ARG="v2ray"
-    export CF_TRYCOUNT_ARG="$tryCount"
-    export CF_DOWNTHRESHOLD_ARG="$downThreshold"
-    export CF_UPTHRESHOLD_ARG="$upThreshold"
-    export CF_DOWNLOADORUPLOAD_ARG="$downloadOrUpload"
-    export CF_VPNORNOT_ARG="$vpnOrNot"
-    export CF_QUICKORNOT_ARG="$quickOrNot"
-    export CF_SKIPPORTCHECK_ARG="$skipPortCheck"
+    export CF_TRYCOUNT_ARG="$tryCnt_def"
+    export CF_DOWNTHRESHOLD_ARG="$downThr_def"
+    export CF_UPTHRESHOLD_ARG="$upThr_def"
+    export CF_DOWNLOADORUPLOAD_ARG="$dlUl_def"
+    export CF_VPNORNOT_ARG="$vpn_def"
+    export CF_QUICKORNOT_ARG="$quick_def"
+    export CF_SKIPPORTCHECK_ARG="$skipPortCheck_def"
     export CF_ACTUAL_SNI_ARG="$configServerName_FromFile"
 
     if [[ "$mode" == "SUBNET" ]]; then
-        fncMainCFFindSubnet "$threads" "$resultFile" "$scriptDir" "$inputFile"
+        fncMainCFFindSubnet "$threads" "$inputFile"
     elif [[ "$mode" == "IP" ]]; then
-        fncMainCFFindIP "$threads" "$resultFile" "$scriptDir" "$inputFile"
+        fncMainCFFindIP "$threads" "$inputFile"
     fi
 }
 
 fncMainCFFindSubnet() {
-    local th_main="$1" resFile_main="$2" scrDir_main="$3" subnetsFile_main="$4"
+    local th_main="$1" subnetsFile_main="$2"
     local parallelVer; parallelVer=$(parallel --version | head -n1 | grep -Ewo '[0-9]{8}')
 
     echo "Reading subnets from file $subnetsFile_main"
@@ -443,7 +443,7 @@ fncMainCFFindSubnet() {
     echo "Calculating total IPs and preparing packages..."
     for sn_loop in ${cfSubnetList}; do
         brk_sn_loop=""; nw_loop=${sn_loop%/*}; nm_loop=${sn_loop#*/}
-        if [[ -z "$nw_loop" || -z "$nm_loop" ]]; then continue; fi # Skip invalid lines
+        if [[ -z "$nw_loop" || -z "$nm_loop" ]]; then continue; fi
         if [[ ${nm_loop} -ge ${maxSubnet_loop} ]]; then
             brk_sn_loop="${brk_sn_loop} ${nw_loop}/${nm_loop}"
         else
@@ -520,14 +520,15 @@ fncMainCFFindSubnet() {
 }
 
 fncMainCFFindIP() {
-    local threads_ip="$1" ipFile_main="$4"
+    local threads_ip="$1" ipFile_main="$2"
     local parallelVer; parallelVer=$(parallel --version | head -n1 | grep -Ewo '[0-9]{8}')
 
     echo "Reading IPs from file $ipFile_main"
-    # --- NEW: De-duplicate IP list ---
+    
+    # --- MODIFIED: Use awk to de-duplicate and preserve order ---
     local rawIPList; rawIPList=$(grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' "$ipFile_main")
     local total_count; total_count=$(echo "$rawIPList" | wc -l)
-    local cfIPList; cfIPList=$(echo "$rawIPList" | sort -u)
+    local cfIPList; cfIPList=$(echo "$rawIPList" | awk '!seen[$0]++')
     local unique_count; unique_count=$(echo "$cfIPList" | wc -l)
     local duplicates_removed=$((total_count - unique_count))
 
@@ -535,7 +536,7 @@ fncMainCFFindIP() {
         echo "$duplicates_removed duplicate IPs were found and removed."
     fi
     echo "$unique_count unique IPs will be scanned."
-    # --- END NEW ---
+    # --- END MODIFIED ---
 
     tput cuu1; tput ed
     if [[ $parallelVer -gt 20220515 ]];
@@ -625,11 +626,9 @@ fi
 echo "Mode: $subnetOrIP_def"
 runScan "$th_def" "" "$resFile_glob" "$scrDir_glob" \
     "$configId" "$configHost" "$configPort" "$configPath" \
-    "$fSizeTest_glob" "$osVer_glob" "$subnetIPFile" "$tryCnt_def" \
-    "$downThr_def" "$upThr_def" "$dlUl_def" "$vpn_def" "$quick_def" "$skipPortCheck_def" "$subnetOrIP_def"
+    "$fSizeTest_glob" "$osVer_glob" "$subnetIPFile" "$subnetOrIP_def"
 
 echo ""; echo "Scan complete. Results saved in: $resFile_glob"
 
 # --- Final Ranking ---
 fncRankResults "$resFile_glob"
-
