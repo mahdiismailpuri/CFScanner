@@ -5,7 +5,7 @@
 #===============================================================================
 
 # --- Script Version ---
-SCRIPT_VERSION="1.7.1-PreserveOrder" # Now preserves original file order in IP mode
+SCRIPT_VERSION="1.9.0-DF-Check-Toggle" # Added optional domain fronting check with -j
 
 # --- Clear Screen ---
 clear
@@ -146,12 +146,12 @@ function fncCheckIPList {
     local resultFile="$CF_RESULT_FILE_ARG"; local scriptDir="$CF_SCRIPT_DIR_ARG"
     local configId="$CF_CONFIGID_ARG"; local configHost="$CF_CONFIGHOST_ARG"
     local configPort="$CF_CONFIGPORT_ARG"; local configPath_esc="$CF_CONFIGPATH_ESC_ARG"
-    local actual_sni_to_use="$CF_ACTUAL_SNI_ARG" # SNI to use (from ClientConfig: serverName or host)
+    local actual_sni_to_use="$CF_ACTUAL_SNI_ARG"
     local v2rayCommandToRun="$CF_V2RAY_COMMAND_ARG"
     local fileSize="$CF_FILESIZE_ARG"; local tryCount="$CF_TRYCOUNT_ARG"
     local downThreshold="$CF_DOWNTHRESHOLD_ARG"; local upThreshold="$CF_UPTHRESHOLD_ARG"
     local downloadOrUpload="$CF_DOWNLOADORUPLOAD_ARG"; local vpnOrNot="$CF_VPNORNOT_ARG"
-    local quickOrNot="$CF_QUICKORNOT_ARG"; local skipPortCheck="$CF_SKIPPORTCHECK_ARG"
+    local quickOrNot="$CF_QUICKORNOT_ARG"; local skipPortCheck="$CF_SKIPPORTCHECK_ARG"; local skipDFCheck="$CF_SKIPDFCHECK_ARG"
     local timeoutCommand domainFronting downOK upOK
     local binDir="$scriptDir/../bin"; local tempConfigDir="$scriptDir/tempConfig"
     local uploadFile="$tempConfigDir/upload_file"; timeoutCommand="timeout"
@@ -165,12 +165,18 @@ function fncCheckIPList {
             elif [[ "$downloadOrUpload" == "DOWN" ]]; then downOK="NO"; upOK="YES"; fi
 
             if [[ "$skipPortCheck" == "YES" ]] || $timeoutCommand 1 bash -c "</dev/tcp/$ip/443" > /dev/null 2>&1; then
-                if [[ "$quickOrNot" == "NO" ]]; then domainFronting=$($timeoutCommand 1 curl -k -s --tlsv1.2 -H "Host: speed.cloudflare.com" --resolve "speed.cloudflare.com:443:$ip" "https://speed.cloudflare.com/__down?bytes=10");
-                else domainFronting="0000000000"; fi
+                local df_check_result="FAILED"
+                if [[ "$skipDFCheck" == "YES" ]] || [[ "$quickOrNot" == "YES" ]]; then
+                    df_check_result="OK"
+                else
+                    domainFronting=$($timeoutCommand 1 curl -k -s --tlsv1.2 -H "Host: speed.cloudflare.com" --resolve "speed.cloudflare.com:443:$ip" "https://speed.cloudflare.com/__down?bytes=10")
+                    if [[ "$domainFronting" == "0000000000" ]]; then
+                        df_check_result="OK"
+                    fi
+                fi
 
-                if [[ "$domainFronting" == "0000000000" ]]; then
+                if [[ "$df_check_result" == "OK" ]]; then
                     local ipConfigFile ipO1 ipO2 ipO3 ipO4 port pid
-
                     ipConfigFile="$tempConfigDir/$ip.config.json"
                     cp "$scriptDir"/config.json.temp "$ipConfigFile"
                     ipO1=$(echo "$ip" | awk -F '.' '{print $1}'); ipO2=$(echo "$ip" | awk -F '.' '{print $2}'); ipO3=$(echo "$ip" | awk -F '.' '{print $3}'); ipO4=$(echo "$ip" | awk -F '.' '{print $4}')
@@ -186,7 +192,6 @@ function fncCheckIPList {
                     if [[ "$pid" ]]; then kill -9 "$pid" > /dev/null 2>&1; fi
 
                     local downTotalTime=0 upTotalTime=0 downIndividualTimes="" upIndividualTimes="" downSuccessedCount=0 upSuccessedCount=0 downTimeMil upTimeMil result i
-
                     local v2ray_exec_log_file="$tempConfigDir/v2ray_exec_log.$ip.txt"
                     > "$v2ray_exec_log_file"
                     nohup "$binDir"/"$v2rayCommandToRun" -c "$ipConfigFile" >> "$v2ray_exec_log_file" 2>&1 &
@@ -206,11 +211,11 @@ function fncCheckIPList {
                     for i in $(seq 1 "$tryCount"); do
                         downTimeMil=0; upTimeMil=0
                         if [[ "$downloadOrUpload" == "DOWN" ]] || [[ "$downloadOrUpload" == "BOTH" ]]; then
-                            downTimeMil=$($timeoutCommand 2 curl -x "socks5://127.0.0.1:$socks_port" -s -w "TIME: %{time_total}\n" --resolve "speed.cloudflare.com:443:$ip" "https://speed.cloudflare.com/__down?bytes=$fileSize" --output /dev/null | grep "TIME" | tail -n 1 | awk '{print $2}' | xargs -I {} echo "{} * 1000 /1" | bc )
+                            downTimeMil=$($timeoutCommand 10 curl -x "socks5://127.0.0.1:$socks_port" -s -w "TIME: %{time_total}\n" --resolve "speed.cloudflare.com:443:$ip" "https://speed.cloudflare.com/__down?bytes=$fileSize" --output /dev/null | grep "TIME" | tail -n 1 | awk '{print $2}' | xargs -I {} echo "{} * 1000 /1" | bc )
                             if [[ $downTimeMil -gt 100 ]]; then downSuccessedCount=$((downSuccessedCount+1)); downIndividualTimes+="$downTimeMil, "; else downTimeMil=0; downIndividualTimes+="0, "; fi
                         fi
                         if [[ "$downloadOrUpload" == "UP" ]] || [[ "$downloadOrUpload" == "BOTH" ]]; then
-                            result=$($timeoutCommand 2 curl -x "socks5://127.0.0.1:$socks_port" -s -w "\nTIME: %{time_total}\n" --resolve "speed.cloudflare.com:443:$ip" --data "@$uploadFile" https://speed.cloudflare.com/__up | grep "TIME" | tail -n 1 | awk '{print $2}' | xargs -I {} echo "{} * 1000 /1" | bc)
+                            result=$($timeoutCommand 10 curl -x "socks5://127.0.0.1:$socks_port" -s -w "\nTIME: %{time_total}\n" --resolve "speed.cloudflare.com:443:$ip" --data "@$uploadFile" https://speed.cloudflare.com/__up | grep "TIME" | tail -n 1 | awk '{print $2}' | xargs -I {} echo "{} * 1000 /1" | bc)
                             if [[ "$result" ]]; then upTimeMil="$result"; if [[ $upTimeMil -gt 100 ]]; then upSuccessedCount=$((upSuccessedCount+1)); upIndividualTimes+="$upTimeMil, "; else upTimeMil=0; upIndividualTimes+="0, "; fi
                             else upIndividualTimes+="0, "; fi
                         fi
@@ -232,7 +237,7 @@ function fncCheckIPList {
                             if [[ "$upRealTime" && $upRealTime -gt 100 ]]; then echo "$upRealTime, [$upIndividualTimes] UP FOR IP $ip" >> "$resultFile"; fi
                         else echo -e "${RED}FAILED${NC} $ip"; fi
                     else echo -e "${RED}FAILED${NC} $ip"; fi
-                else echo -e "${RED}FAILED${NC} $ip"; fi
+                else echo -e "${RED}FAILED (DF Check)${NC} $ip"; fi
             else echo -e "${RED}FAILED (Port Closed)${NC} $ip"; fi
         done
     elif [[ "$vpnOrNot" == "NO" ]]; then
@@ -243,18 +248,26 @@ function fncCheckIPList {
             elif [[ "$downloadOrUpload" == "DOWN" ]]; then downOK="NO"; upOK="YES"; fi
 
             if [[ "$skipPortCheck" == "YES" ]] || $timeoutCommand 1 bash -c "</dev/tcp/$ip/443" > /dev/null 2>&1; then
-                if [[ "$quickOrNot" == "NO" ]]; then domainFronting=$($timeoutCommand 1 curl -k -s --tlsv1.2 -H "Host: speed.cloudflare.com" --resolve "speed.cloudflare.com:443:$ip" "https://speed.cloudflare.com/__down?bytes=10");
-                else domainFronting="0000000000"; fi
-                if [[ "$domainFronting" == "0000000000" ]]; then
+                local df_check_result="FAILED"
+                if [[ "$skipDFCheck" == "YES" ]] || [[ "$quickOrNot" == "YES" ]]; then
+                    df_check_result="OK"
+                else
+                    domainFronting=$($timeoutCommand 1 curl -k -s --tlsv1.2 -H "Host: speed.cloudflare.com" --resolve "speed.cloudflare.com:443:$ip" "https://speed.cloudflare.com/__down?bytes=10")
+                    if [[ "$domainFronting" == "0000000000" ]]; then
+                        df_check_result="OK"
+                    fi
+                fi
+
+                if [[ "$df_check_result" == "OK" ]]; then
                     local downTotalTime=0 upTotalTime=0 downIndividualTimes="" upIndividualTimes="" downSuccessedCount=0 upSuccessedCount=0 downTimeMil upTimeMil result i
                     for i in $(seq 1 "$tryCount"); do
                         downTimeMil=0; upTimeMil=0
                         if [[ "$downloadOrUpload" == "DOWN" ]] || [[ "$downloadOrUpload" == "BOTH" ]]; then
-                            downTimeMil=$($timeoutCommand 2 curl -s -w "TIME: %{time_total}\n" -H "Host: speed.cloudflare.com" --resolve "speed.cloudflare.com:443:$ip" "https://speed.cloudflare.com/__down?bytes=$fileSize" --output /dev/null | grep "TIME" | tail -n 1 | awk '{print $2}' | xargs -I {} echo "{} * 1000 /1" | bc )
+                            downTimeMil=$($timeoutCommand 10 curl -s -w "TIME: %{time_total}\n" -H "Host: speed.cloudflare.com" --resolve "speed.cloudflare.com:443:$ip" "https://speed.cloudflare.com/__down?bytes=$fileSize" --output /dev/null | grep "TIME" | tail -n 1 | awk '{print $2}' | xargs -I {} echo "{} * 1000 /1" | bc )
                             if [[ $downTimeMil -gt 100 ]]; then downSuccessedCount=$((downSuccessedCount+1)); downIndividualTimes+="$downTimeMil, "; else downTimeMil=0; downIndividualTimes+="0, "; fi
                         fi
                         if [[ "$downloadOrUpload" == "UP" ]] || [[ "$downloadOrUpload" == "BOTH" ]]; then
-                            result=$($timeoutCommand 2 curl -s -w "\nTIME: %{time_total}\n" -H "Host: speed.cloudflare.com" --resolve "speed.cloudflare.com:443:$ip" --data "@$uploadFile" https://speed.cloudflare.com/__up | grep "TIME" | tail -n 1 | awk '{print $2}' | xargs -I {} echo "{} * 1000 /1" | bc)
+                            result=$($timeoutCommand 10 curl -s -w "\nTIME: %{time_total}\n" -H "Host: speed.cloudflare.com" --resolve "speed.cloudflare.com:443:$ip" --data "@$uploadFile" https://speed.cloudflare.com/__up | grep "TIME" | tail -n 1 | awk '{print $2}' | xargs -I {} echo "{} * 1000 /1" | bc)
                             if [[ "$result" ]]; then upTimeMil="$result"; if [[ $upTimeMil -gt 100 ]]; then upSuccessedCount=$((upSuccessedCount+1)); upIndividualTimes+="$upTimeMil, "; else upTimeMil=0; upIndividualTimes+="0, "; fi
                             else upIndividualTimes+="0, "; fi
                         fi
@@ -271,7 +284,7 @@ function fncCheckIPList {
                             if [[ "$upRealTime" && $upRealTime -gt 100 ]]; then echo "$upRealTime, [$upIndividualTimes] UP FOR IP $ip" >> "$resultFile"; fi
                         else echo -e "${RED}FAILED${NC} $ip"; fi
                     else echo -e "${RED}FAILED${NC} $ip"; fi
-                else echo -e "${RED}FAILED${NC} $ip"; fi
+                else echo -e "${RED}FAILED (DF Check)${NC} $ip"; fi
             else echo -e "${RED}FAILED (Port Closed)${NC} $ip"; fi
         done
     fi
@@ -412,6 +425,7 @@ function runScan {
     export CF_VPNORNOT_ARG="$vpn_def"
     export CF_QUICKORNOT_ARG="$quick_def"
     export CF_SKIPPORTCHECK_ARG="$skipPortCheck_def"
+    export CF_SKIPDFCHECK_ARG="$skipDFCheck_def"
     export CF_ACTUAL_SNI_ARG="$configServerName_FromFile"
 
     if [[ "$mode" == "SUBNET" ]]; then
@@ -525,7 +539,6 @@ fncMainCFFindIP() {
 
     echo "Reading IPs from file $ipFile_main"
     
-    # --- MODIFIED: Use awk to de-duplicate and preserve order ---
     local rawIPList; rawIPList=$(grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' "$ipFile_main")
     local total_count; total_count=$(echo "$rawIPList" | wc -l)
     local cfIPList; cfIPList=$(echo "$rawIPList" | awk '!seen[$0]++')
@@ -536,7 +549,6 @@ fncMainCFFindIP() {
         echo "$duplicates_removed duplicate IPs were found and removed."
     fi
     echo "$unique_count unique IPs will be scanned."
-    # --- END MODIFIED ---
 
     tput cuu1; tput ed
     if [[ $parallelVer -gt 20220515 ]];
@@ -552,11 +564,11 @@ fncMainCFFindIP() {
 # --- Main script execution ---
 subnetIPFile="NULL"; downThr_def="1"; upThr_def="1"; osVer_glob="$(fncCheckDpnd)"
 vpn_def="NO"; dlUl_def="BOTH"; th_def="4"; tryCnt_def="1"; cfg_param="NULL"
-speed_param="100"; quick_def="NO"; subnetOrIP_def="SUBNET"; skipPortCheck_def="NO"
+speed_param="100"; quick_def="NO"; subnetOrIP_def="SUBNET"; skipPortCheck_def="NO"; skipDFCheck_def="NO"
 
 configId=""; configHost=""; configPort=""; configPath=""; configServerName_FromFile=""
 
-parsedArgs=$(getopt -a -n cfScanner -o v:m:t:p:n:c:s:d:u:f:q:k:h --long vpn-mode:,mode:,test-type:,thread:,tryCount:,config:,speed:,down-threshold:,up-threshold:,file:,quick:,skip-port-check:,help -- "$@")
+parsedArgs=$(getopt -a -n cfScanner -o v:m:t:p:n:c:s:d:u:f:q:k:j:h --long vpn-mode:,mode:,test-type:,thread:,tryCount:,config:,speed:,down-threshold:,up-threshold:,file:,quick:,skip-port-check:,skip-df-check:,help -- "$@")
 eval set -- "$parsedArgs"
 while : ; do case "$1" in
     -v|--vpn-mode) vpn_def="$2";shift 2;;
@@ -571,6 +583,7 @@ while : ; do case "$1" in
     -f|--file) subnetIPFile="$2";shift 2;;
     -q|--quick) quick_def="$2";shift 2;;
     -k|--skip-port-check) skipPortCheck_def="$2";shift 2;;
+    -j|--skip-df-check) skipDFCheck_def="$2";shift 2;;
     -h|--help) fncUsage;;
     --) shift;break;;
     *) echo "Opt err: $1";fncUsage;; esac
@@ -581,6 +594,7 @@ if [[ "$vpn_def" != "YES" && "$vpn_def" != "NO" ]]; then echo "Err -v: Must be Y
 if [[ "$subnetOrIP_def" != "SUBNET" && "$subnetOrIP_def" != "IP" ]]; then echo "Err -m: Must be SUBNET or IP"; exit 2; fi
 if [[ "$dlUl_def" != "DOWN" && "$dlUl_def" != "UP" && "$dlUl_def" != "BOTH" ]]; then echo "Err -t: Must be DOWN, UP, or BOTH"; exit 2; fi
 if [[ "$skipPortCheck_def" != "YES" && "$skipPortCheck_def" != "NO" ]]; then echo "Err -k: Must be YES or NO"; exit 2; fi
+if [[ "$skipDFCheck_def" != "YES" && "$skipDFCheck_def" != "NO" ]]; then echo "Err -j: Must be YES or NO"; exit 2; fi
 if [[ "$subnetIPFile" == "NULL" ]] || [[ ! -f "$subnetIPFile" ]]; then echo "Err -f: File not provided or not found"; exit 1; fi
 
 # --- Setup directories and files ---
@@ -598,12 +612,16 @@ header2="# Port 443 Check: ENABLED"
 if [[ "$skipPortCheck_def" == "YES" ]]; then
     header2="# Port 443 Check: SKIPPED"
 fi
+header3="# Domain Fronting Check: ENABLED"
+if [[ "$skipDFCheck_def" == "YES" ]]; then
+    header3="# Domain Fronting Check: SKIPPED"
+fi
 
-if ! { echo "$header1"; echo "$header2"; } > "$resFile_glob" 2>/dev/null; then
+if ! { echo "$header1"; echo "$header2"; echo "$header3"; } > "$resFile_glob" 2>/dev/null; then
     echo "Error: Cannot write to result file '$resFile_glob'. Permission denied or path issue."
     resFile_glob="./$now-result.cf"
     echo "Attempting to write result file to current directory: $resFile_glob"
-    if ! { echo "$header1"; echo "$header2"; } > "$resFile_glob"; then
+    if ! { echo "$header1"; echo "$header2"; echo "$header3"; } > "$resFile_glob"; then
         echo "Error: Still cannot write result file. Please check permissions."
         exit 1
     fi
