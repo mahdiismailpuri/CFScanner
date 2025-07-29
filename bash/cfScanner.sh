@@ -5,7 +5,7 @@
 #===============================================================================
 
 # --- Script Version ---
-SCRIPT_VERSION="1.9.0-CustomPort" # Added option to specify a custom scan port
+SCRIPT_VERSION="1.9.1-ResumeReady" # Added resume functionality for subnet scans
 
 # --- Clear Screen ---
 clear
@@ -15,6 +15,31 @@ echo "==================================="
 echo ""
 
 export TOP_PID=$$
+
+# --- START: Added for Resume Functionality ---
+# Function for graceful exit on Ctrl+C
+fncGracefulExit() {
+  echo -e "\n\n${YELLOW}Scan interrupted by user. Progress has been saved.${NC}"
+  echo -e "${YELLOW}To resume, simply run the script again with the same parameters.${NC}"
+  # Exit with code 130, which is standard for scripts stopped by Ctrl+C.
+  # The EXIT trap below will handle the actual process cleanup.
+  exit 130
+}
+
+# Function to clean up child processes on any exit
+fncOnExit() {
+    local pids
+    pids=$(jobs -p)
+    if [[ -n "$pids" ]]; then
+        kill $pids >/dev/null 2>&1
+    fi
+}
+
+# Set traps to catch signals
+trap fncGracefulExit SIGINT # Catches Ctrl+C
+trap fncOnExit EXIT         # Catches any script exit (normal, error, or interrupted)
+# --- END: Added for Resume Functionality ---
+
 
 # Function fncFormatSecondsToMmSs
 # Converts total seconds to MmSs format (e.g., 90 -> 1m30s)
@@ -80,9 +105,9 @@ fncSubnetToIP() {
     else                            # assume CIDR like /24, convert to mask
         if [[ $((mask)) -lt 8 ]]; then
             maskarr=($((256-2**(8-mask))) 0 0 0)
-        elif   [[ $((mask)) -lt 16 ]]; then
+        elif  [[ $((mask)) -lt 16 ]]; then
             maskarr=(255 $((256-2**(16-mask))) 0 0)
-        elif   [[ $((mask)) -lt 24 ]]; then
+        elif  [[ $((mask)) -lt 24 ]]; then
             maskarr=(255 255 $((256-2**(24-mask))) 0)
         elif [[ $((mask)) -lt 32 ]]; then
             maskarr=(255 255 255 $((256-2**(32-mask))))
@@ -398,6 +423,11 @@ fncMainCFFindSubnet() {
     local dlUl_main="${15}" vpn_main="${16}" quick_main="${17}" skip_port_check_main="${18}"
     local bypass_df_check_main="${19}" scan_port_main="${20}"
     
+    # --- START: Modified for Resume Functionality ---
+    # Define the path for the progress file
+    local progressFile="$scrDir_main/scan_progress.txt"
+    # --- END: Modified for Resume Functionality ---
+
     local v2rayCommandToRun_main="v2ray"
     local parallelVer; parallelVer=$(parallel --version | head -n1 | grep -Ewo '[0-9]{8}')
     
@@ -471,7 +501,39 @@ fncMainCFFindSubnet() {
     local scanned_individual_ips_count=0
     local current_package_idx ipList_current_pkg_str x_display z_formatted_time display_string_for_parallel
     
-    for (( current_package_idx=0; current_package_idx<ipListLength; current_package_idx++ )); do
+    # --- START: Modified for Resume Functionality ---
+    # Check for a progress file and determine the starting point
+    local start_index=0
+    if [[ -f "$progressFile" ]] && [[ -s "$progressFile" ]]; then
+        local last_scanned_package
+        last_scanned_package=$(cat "$progressFile")
+        echo -e "${YELLOW}Found progress file. Attempting to resume scan...${NC}"
+        
+        # Find the index of the last scanned package in our list
+        for i in "${!all_processing_packages[@]}"; do
+           if [[ "${all_processing_packages[$i]}" = "${last_scanned_package}" ]]; then
+               start_index=$i
+               break
+           fi
+        done
+
+        if [[ $start_index -gt 0 ]]; then
+            echo -e "${GREEN}Resuming from package $((start_index + 1)) of $ipListLength (${last_scanned_package})...${NC}"
+            # Recalculate already scanned IPs to fix ETA
+            for (( i=0; i<start_index; i++ )); do
+                scanned_individual_ips_count=$((scanned_individual_ips_count + ${ips_in_each_package_array[$i]:-0}))
+            done
+            echo "Skipped approximately $scanned_individual_ips_count individual IPs from previous sessions."
+        else
+            echo -e "${YELLOW}Could not find the last scanned package in the current list. Starting from the beginning.${NC}"
+        fi
+    fi
+    # --- END: Modified for Resume Functionality ---
+
+    # --- START: Modified for Resume Functionality ---
+    # The main loop now starts from 'start_index' instead of 0
+    for (( current_package_idx=$start_index; current_package_idx<ipListLength; current_package_idx++ )); do
+    # --- END: Modified for Resume Functionality ---
         local breakedSubnet_item_current="${all_processing_packages[$current_package_idx]}"
         x_display=$((current_package_idx + 1))
 
@@ -499,6 +561,11 @@ fncMainCFFindSubnet() {
         
         display_string_for_parallel="| ($x_display:$ipListLength=${z_formatted_time}) | $progressBar"
 
+        # --- START: Modified for Resume Functionality ---
+        # Save current package to progress file BEFORE starting the scan for it
+        echo "$breakedSubnet_item_current" > "$progressFile"
+        # --- END: Modified for Resume Functionality ---
+
         if [[ $parallelVer -gt 20220515 ]]; then
             parallel --ll --bar -j "$th_main" fncCheckIPList ::: "$ipList_current_pkg_str" ::: "$display_string_for_parallel"
         else
@@ -510,6 +577,12 @@ fncMainCFFindSubnet() {
         scanned_individual_ips_count=$((scanned_individual_ips_count + num_ips_in_just_processed_package))
     done
     
+    # --- START: Modified for Resume Functionality ---
+    # If the loop completes, the scan was successful. Clean up the progress file.
+    echo -e "\n${GREEN}Subnet scan completed successfully. Removing progress file.${NC}"
+    rm -f "$progressFile"
+    # --- END: Modified for Resume Functionality ---
+
     if [[ $ipListLength -gt 0 ]]; then echo ""; fi
     sort -n -k1 -t, "$resFile_main" -o "$resFile_main"
 }
@@ -665,3 +738,4 @@ echo ""; echo "Scan complete. Raw results saved in: $resFile_glob"
 
 # --- Final step: Rank and display the results ---
 fncRankResults "$resFile_glob"
+
