@@ -5,7 +5,7 @@
 #===============================================================================
 
 # --- Script Version ---
-SCRIPT_VERSION="1.9.1-ResumeReady" # Added resume functionality for subnet scans
+SCRIPT_VERSION="1.9.2-ConnectivityCheck" # Added internet connectivity check before scans
 
 # --- Clear Screen ---
 clear
@@ -16,7 +16,6 @@ echo ""
 
 export TOP_PID=$$
 
-# --- START: Added for Resume Functionality ---
 # Function for graceful exit on Ctrl+C
 fncGracefulExit() {
   echo -e "\n\n${YELLOW}Scan interrupted by user. Progress has been saved.${NC}"
@@ -38,7 +37,33 @@ fncOnExit() {
 # Set traps to catch signals
 trap fncGracefulExit SIGINT # Catches Ctrl+C
 trap fncOnExit EXIT         # Catches any script exit (normal, error, or interrupted)
-# --- END: Added for Resume Functionality ---
+
+
+# --- START: Added for Connectivity Check ---
+# Function to check internet connectivity with retries
+fncCheckConnectivity() {
+    local retries=3
+    local wait_time=5
+    echo -e "\n${BLUE}Checking internet connectivity...${NC}"
+    for ((i=1; i<=retries; i++)); do
+        # -c 1: send 1 packet
+        # -W 2: wait 2 seconds for a response
+        if ping -c 1 -W 2 8.8.8.8 &> /dev/null; then
+            echo -e "${GREEN}Connection OK.${NC}"
+            return 0 # Success
+        fi
+        
+        if [[ $i -lt $retries ]]; then
+            echo -e "${YELLOW}Connection check failed (Attempt $i/$retries). Retrying in $wait_time seconds...${NC}"
+            sleep $wait_time
+        fi
+    done
+
+    echo -e "\n${RED}FATAL: Internet connection lost. Exiting safely.${NC}"
+    echo -e "${RED}Progress has been saved. Please check your connection and run the script again to resume.${NC}"
+    exit 1 # Exit the script; the EXIT trap will handle cleanup.
+}
+# --- END: Added for Connectivity Check ---
 
 
 # Function fncFormatSecondsToMmSs
@@ -423,10 +448,7 @@ fncMainCFFindSubnet() {
     local dlUl_main="${15}" vpn_main="${16}" quick_main="${17}" skip_port_check_main="${18}"
     local bypass_df_check_main="${19}" scan_port_main="${20}"
     
-    # --- START: Modified for Resume Functionality ---
-    # Define the path for the progress file
     local progressFile="$scrDir_main/scan_progress.txt"
-    # --- END: Modified for Resume Functionality ---
 
     local v2rayCommandToRun_main="v2ray"
     local parallelVer; parallelVer=$(parallel --version | head -n1 | grep -Ewo '[0-9]{8}')
@@ -501,15 +523,12 @@ fncMainCFFindSubnet() {
     local scanned_individual_ips_count=0
     local current_package_idx ipList_current_pkg_str x_display z_formatted_time display_string_for_parallel
     
-    # --- START: Modified for Resume Functionality ---
-    # Check for a progress file and determine the starting point
     local start_index=0
     if [[ -f "$progressFile" ]] && [[ -s "$progressFile" ]]; then
         local last_scanned_package
         last_scanned_package=$(cat "$progressFile")
         echo -e "${YELLOW}Found progress file. Attempting to resume scan...${NC}"
         
-        # Find the index of the last scanned package in our list
         for i in "${!all_processing_packages[@]}"; do
            if [[ "${all_processing_packages[$i]}" = "${last_scanned_package}" ]]; then
                start_index=$i
@@ -519,7 +538,6 @@ fncMainCFFindSubnet() {
 
         if [[ $start_index -gt 0 ]]; then
             echo -e "${GREEN}Resuming from package $((start_index + 1)) of $ipListLength (${last_scanned_package})...${NC}"
-            # Recalculate already scanned IPs to fix ETA
             for (( i=0; i<start_index; i++ )); do
                 scanned_individual_ips_count=$((scanned_individual_ips_count + ${ips_in_each_package_array[$i]:-0}))
             done
@@ -528,12 +546,8 @@ fncMainCFFindSubnet() {
             echo -e "${YELLOW}Could not find the last scanned package in the current list. Starting from the beginning.${NC}"
         fi
     fi
-    # --- END: Modified for Resume Functionality ---
 
-    # --- START: Modified for Resume Functionality ---
-    # The main loop now starts from 'start_index' instead of 0
     for (( current_package_idx=$start_index; current_package_idx<ipListLength; current_package_idx++ )); do
-    # --- END: Modified for Resume Functionality ---
         local breakedSubnet_item_current="${all_processing_packages[$current_package_idx]}"
         x_display=$((current_package_idx + 1))
 
@@ -561,10 +575,13 @@ fncMainCFFindSubnet() {
         
         display_string_for_parallel="| ($x_display:$ipListLength=${z_formatted_time}) | $progressBar"
 
-        # --- START: Modified for Resume Functionality ---
+        # --- START: Added for Connectivity Check ---
+        # Check internet connection before proceeding with this package
+        fncCheckConnectivity
+        # --- END: Added for Connectivity Check ---
+
         # Save current package to progress file BEFORE starting the scan for it
         echo "$breakedSubnet_item_current" > "$progressFile"
-        # --- END: Modified for Resume Functionality ---
 
         if [[ $parallelVer -gt 20220515 ]]; then
             parallel --ll --bar -j "$th_main" fncCheckIPList ::: "$ipList_current_pkg_str" ::: "$display_string_for_parallel"
@@ -577,12 +594,9 @@ fncMainCFFindSubnet() {
         scanned_individual_ips_count=$((scanned_individual_ips_count + num_ips_in_just_processed_package))
     done
     
-    # --- START: Modified for Resume Functionality ---
-    # If the loop completes, the scan was successful. Clean up the progress file.
     echo -e "\n${GREEN}Subnet scan completed successfully. Removing progress file.${NC}"
     rm -f "$progressFile"
-    # --- END: Modified for Resume Functionality ---
-
+    
     if [[ $ipListLength -gt 0 ]]; then echo ""; fi
     sort -n -k1 -t, "$resFile_main" -o "$resFile_main"
 }
@@ -631,6 +645,11 @@ function fncMainCFFindIP {
         echo -e "${RED}No valid IPs found in the file. Exiting.${NC}"
         exit 1
     fi
+
+    # --- START: Added for Connectivity Check ---
+    # Check internet connection before starting the parallel scan
+    fncCheckConnectivity
+    # --- END: Added for Connectivity Check ---
 
     if [[ $parallelVer -gt 20220515 ]];
     then
